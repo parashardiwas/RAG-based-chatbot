@@ -40,7 +40,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Reset retry counter if we get here
         self._redis_retry_count = 0
         
-        if self._redis is None or self._redis.connection_pool.disconnect():
+        needs_reconnect = False
+        if self._redis is None:
+            needs_reconnect = True
+        else:
+            try:
+                await self._redis.ping()
+            except Exception:
+                needs_reconnect = True
+
+        if needs_reconnect:
             try:
                 import redis.asyncio as aioredis
                 settings = get_settings()

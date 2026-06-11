@@ -17,6 +17,12 @@ class TranslatorService:
             self._client = AsyncOpenAI(api_key=self._settings.openai_api_key)
         return self._client
         
+    async def cleanup(self):
+        """Cleanup resources like the AsyncOpenAI client."""
+        if self._client:
+            await self._client.close()
+            self._client = None
+        
     async def translate_to_english(self, text: str) -> dict[str, str]:
         """
         Takes raw text, identifies language, translates to English.

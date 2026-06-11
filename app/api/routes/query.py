@@ -110,8 +110,7 @@ async def ask_question(
                 topic_filter=request.topic,
             )
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Orchestrator failed: {e}", exc_info=True)
+            logger.error(f"Orchestrator failed: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal processing error")
 
         return QueryResponse(

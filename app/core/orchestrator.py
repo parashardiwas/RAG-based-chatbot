@@ -59,6 +59,7 @@ class Orchestrator:
         self._llm_generator = None
         self._confidence_scorer = None
         self._model_router = None
+        self._translator_service = None
         self._redis = None
 
     async def init(self, db_session_factory, redis_client=None):
@@ -67,12 +68,16 @@ class Orchestrator:
         from app.services.rag.retriever import RetrievalService
         from app.services.llm.generator import LLMGenerator
         from app.services.llm.confidence import ConfidenceScorer
+        from app.services.llm.model_router import ModelRouter
+        from app.services.language.translator import TranslatorService
 
         redis_url = self._settings.redis_url if hasattr(self._settings, 'redis_url') else 'redis://localhost:6379/0'
         self._embedding_service = EmbeddingService(redis_url=redis_url)
         self._retrieval_service = RetrievalService(db_session_factory)
         self._llm_generator = LLMGenerator()
         self._confidence_scorer = ConfidenceScorer()
+        self._model_router = ModelRouter()
+        self._translator_service = TranslatorService()
         self._redis = redis_client
         self._db_session_factory = db_session_factory
 
@@ -101,9 +106,7 @@ class Orchestrator:
 
         try:
             # ── Step 1: Translate to English ────────────────────
-            from app.services.language.translator import TranslatorService
-            translator = TranslatorService()
-            trans_result = await translator.translate_to_english(text)
+            trans_result = await self._translator_service.translate_to_english(text)
             english_question = trans_result["english_text"]
             original_language = language or trans_result["original_language"]
             
@@ -309,7 +312,7 @@ class Orchestrator:
                 disclaimer = self._get_low_confidence_disclaimer(original_language)
                 final_answer = f"{final_answer}\n\n{disclaimer}"
 
-            final_answer = await translator.translate_from_english(final_answer, original_language)
+            final_answer = await self._translator_service.translate_from_english(final_answer, original_language)
 
 
             # ── Step 10: Cache + Log ──────────────────────────
@@ -464,5 +467,17 @@ async def shutdown_orchestrator() -> None:
                 await _orchestrator._redis.close()
             except Exception:
                 pass
+        if _orchestrator._llm_generator:
+            try:
+                await _orchestrator._llm_generator.cleanup()
+            except Exception as e:
+                logger.error(f"Failed to cleanup LLMGenerator: {e}")
+                
+        if _orchestrator._translator_service:
+            try:
+                await _orchestrator._translator_service.cleanup()
+            except Exception as e:
+                logger.error(f"Failed to cleanup TranslatorService: {e}")
+                
         _orchestrator = None
         logger.info("Orchestrator shutdown complete")
