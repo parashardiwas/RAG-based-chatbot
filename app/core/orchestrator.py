@@ -324,7 +324,7 @@ class Orchestrator:
             cost.total_latency_ms = latency
 
             # Cache the result — only include valid_chunks (actually used)
-            await self._cache_result(text, language, topic_filter, {
+            await self._cache_result(english_question, original_language, topic_filter, {
                 "answer": final_answer,
                 "confidence": answer_confidence,
                 "retrieval_confidence": retrieval_confidence,
@@ -355,7 +355,7 @@ class Orchestrator:
             await self._log_query(
                 request_id=request_id,
                 input_text=text,
-                detected_language=language,
+                detected_language=original_language,
                 retrieved_chunk_ids=[c.chunk_id for c in valid_chunks],
                 answer=final_answer,
                 retrieval_confidence=retrieval_confidence,
