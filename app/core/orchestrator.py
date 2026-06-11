@@ -175,7 +175,7 @@ class Orchestrator:
                         "sources": [],
                         "model_used": "qa_pair_cache"
                     }
-                    await self._cache_result(english_question, original_language, topic_filter, result_dict)
+                    asyncio.create_task(self._cache_result(english_question, original_language, topic_filter, result_dict))
                     
                     latency = int((time.time() - start_time) * 1000)
                     cost.total_latency_ms = latency
@@ -324,7 +324,7 @@ class Orchestrator:
             cost.total_latency_ms = latency
 
             # Cache the result — only include valid_chunks (actually used)
-            await self._cache_result(english_question, original_language, topic_filter, {
+            asyncio.create_task(self._cache_result(english_question, original_language, topic_filter, {
                 "answer": final_answer,
                 "confidence": answer_confidence,
                 "retrieval_confidence": retrieval_confidence,
@@ -332,12 +332,12 @@ class Orchestrator:
                             "similarity": c.similarity_score, "source_file": c.source_file,
                             "topic": c.topic} for c in valid_chunks],
                 "model_used": generation_result.model_used,
-            })
+            }))
 
             # Track cost
             cost_tracker = await get_cost_tracker()
             cost = cost_tracker.calculate_cost(cost)
-            await cost_tracker.log_cost(cost)
+            asyncio.create_task(cost_tracker.log_cost(cost))
 
             # Only report chunks that were actually used for generation
             sources = [
@@ -352,7 +352,7 @@ class Orchestrator:
             ]
 
             # Log query for audit trail
-            await self._log_query(
+            asyncio.create_task(self._log_query(
                 request_id=request_id,
                 input_text=text,
                 detected_language=original_language,
@@ -363,7 +363,7 @@ class Orchestrator:
                 model_used=generation_result.model_used,
                 total_tokens=generation_result.total_tokens,
                 latency_ms=latency,
-            )
+            ))
 
             return OrchestratorResult(
                 request_id=request_id,
