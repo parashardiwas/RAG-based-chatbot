@@ -165,16 +165,14 @@ class Orchestrator:
                     cost=cost
                 )
 
-            # ── Step 4: Parallel Embed & QA Lookup ──────────────
-            query_embedding, qa_results = await asyncio.gather(
-                self._embedding_service.embed_query(english_question),
-                self._retrieval_service.retrieve_qa_pairs(
-                    query_embedding=None, # Will use DB text match fallback since embedding isn't ready
-                    query_text=english_question,
-                    top_k=1,
-                    subject_filter=subject_filter,
-                    topic_filter=topic_filter
-                )
+            # ── Step 4: Sequential Embed & Semantic QA Lookup ──────────────
+            query_embedding = await self._embedding_service.embed_query(english_question)
+            qa_results = await self._retrieval_service.retrieve_qa_pairs(
+                query_embedding=query_embedding,
+                query_text=english_question,
+                top_k=1,
+                subject_filter=subject_filter,
+                topic_filter=topic_filter
             )
             cost.embedding_tokens = len(english_question.split()) * 2
 
@@ -444,15 +442,13 @@ class Orchestrator:
             return
             
         # ── Step 3: Embed & QA Lookup ───────────────────────
-        query_embedding, qa_results = await asyncio.gather(
-            self._embedding_service.embed_query(english_question),
-            self._retrieval_service.retrieve_qa_pairs(
-                query_embedding=None,
-                query_text=english_question,
-                top_k=1,
-                subject_filter=subject_filter,
-                topic_filter=topic_filter
-            )
+        query_embedding = await self._embedding_service.embed_query(english_question)
+        qa_results = await self._retrieval_service.retrieve_qa_pairs(
+            query_embedding=query_embedding,
+            query_text=english_question,
+            top_k=1,
+            subject_filter=subject_filter,
+            topic_filter=topic_filter
         )
         
         if qa_results and qa_results[0].similarity_score >= 0.85:
