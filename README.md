@@ -7,10 +7,11 @@ A production-grade AI backend using **Retrieval-Augmented Generation (RAG)** to 
 - 🎤 **Multimodal Input**: Text, Audio (Voice), Video (with/without audio), Files
 - 🌐 **Multilingual**: Hindi, English, Hinglish — responds in the same language as input
 - 🔍 **Hybrid RAG**: Vector search (pgvector) + BM25 keyword search with reciprocal rank fusion
+- ⚡ **Ultra-Fast Latency**: Aggressively optimized with parallel retrieval, intelligent BM25 corpus limits, and a fast hybrid language detection pipeline (`langdetect` + heuristics).
 - 📊 **Confidence Scoring**: Multi-layer confidence checks with 80% match threshold
 - ✏️ **Editable Q/A**: Full CRUD with versioning, soft delete, and audit trails
-- ⚡ **50 Concurrent Requests**: asyncio-based concurrency with priority queuing
-- 💰 **Cost Tracking**: Monitor API-equivalent costs for self-hosted models
+- 🚀 **Concurrency**: asyncio-based execution with background task dispatching for caching and logging.
+- 💰 **Cost Tracking**: Monitor API-equivalent costs for LLM tokens
 - 🔒 **Safety**: "I don't know" fallback with clarifying questions
 
 ## Tech Stack
@@ -18,8 +19,8 @@ A production-grade AI backend using **Retrieval-Augmented Generation (RAG)** to 
 | Component | Technology |
 |-----------|------------|
 | Framework | FastAPI (async Python) |
-| LLM | Ollama (Llama 3.1 8B) |
-| Embeddings | sentence-transformers (all-MiniLM-L6-v2) |
+| LLM | OpenAI API (gpt-3.5-turbo, gpt-4o, etc.) |
+| Embeddings | sentence-transformers (multi-qa-MiniLM-L6-cos-v1) |
 | ASR | faster-whisper (large-v3) |
 | OCR | Tesseract |
 | Database | PostgreSQL 16 + pgvector |
@@ -32,7 +33,6 @@ A production-grade AI backend using **Retrieval-Augmented Generation (RAG)** to 
 
 - Python 3.11+
 - Docker (for PostgreSQL + Redis)
-- Ollama (for LLM)
 - ffmpeg (for audio/video processing)
 - Tesseract (for OCR)
 
@@ -52,17 +52,15 @@ pip install -r requirements.txt
 ```bash
 # Start PostgreSQL + Redis
 docker compose up -d
-
-# Install and start Ollama
-curl -fsSL https://ollama.ai/install.sh | sh
-ollama pull llama3.1:8b
 ```
 
 ### 3. Configure Environment
 
 ```bash
 cp .env.example .env
-# Edit .env if needed (defaults work for local dev)
+# Edit .env to add your OpenAI API Key and Model
+# OPENAI_API_KEY="your-api-key"
+# OPENAI_MODEL="gpt-3.5-turbo" 
 ```
 
 ### 4. Run the App
@@ -98,15 +96,15 @@ Navigate to http://localhost:8000 for the web interface, or http://localhost:800
 ```
 Input (Text/Audio/Video/File)
     → Media Processing (Whisper/OCR/File Parser)
-    → Language Detection (Hindi/English/Hinglish)
-    → Cache Check
+    → Fast Hybrid Language Detection (langdetect + heuristics)
+    → Cache Check (Fast Path)
     → Query Embedding (sentence-transformers)
-    → Hybrid Retrieval (pgvector + BM25)
+    → Parallel Hybrid Retrieval (pgvector + BM25)
     → Confidence Gate
-    → Model Selection (cheap → strong)
-    → Answer Generation (Ollama/Llama 3.1)
-    → Answer Confidence Check (80% match)
-    → Response (same language as input)
+    → Answer Generation (OpenAI LLM)
+    → Final Translation (Respects original language)
+    → Background Caching & Auditing
+    → Response
 ```
 
 ## Project Structure
@@ -126,7 +124,7 @@ app/
 │   ├── rag/             # Embedding, retrieval, reranking
 │   ├── llm/             # Generation, confidence, model routing
 │   ├── media/           # Audio, video, file processing
-│   ├── language/        # Language detection
+│   ├── language/        # Language detection and translation
 │   └── qa/              # Q/A pair management
 ├── db/
 │   ├── models.py        # SQLAlchemy ORM models
