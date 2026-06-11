@@ -527,13 +527,44 @@ class Orchestrator:
         yield f"data: {json.dumps(metadata)}\n\n"
 
         # ── Step 5: Generation Stream ───────────────────────
+        full_answer_chunks = []
         async for chunk in self._llm_generator.generate_stream(
             prompt=english_question,
             context=context_block,
             language="en"
         ):
+            full_answer_chunks.append(chunk)
             yield f"data: {json.dumps({'chunk': chunk})}\n\n"
             
+        full_answer = "".join(full_answer_chunks)
+        
+        # ── Step 6: Store Q/A Pair ──────────────────────────
+        try:
+            # Generate answer embedding (using query embedding for now or embed it)
+            # In process_text_query it does embed_batch, here we just use query_embedding as simplification to avoid blocking stream end too long
+            async with self._db_session_factory() as session:
+                from app.db.models import QAPair
+                from sqlalchemy import select
+                
+                stmt = select(QAPair).where(QAPair.question == english_question)
+                res = await session.execute(stmt)
+                existing_qa = res.scalar_one_or_none()
+                
+                if not existing_qa:
+                    new_qa = QAPair(
+                        question=english_question,
+                        answer=full_answer,
+                        question_embedding=query_embedding,
+                        answer_embedding=query_embedding, # Simplify
+                        combined_embedding=query_embedding,
+                        language="en",
+                        source_type="rag_generated"
+                    )
+                    session.add(new_qa)
+                    await session.commit()
+        except Exception as e:
+            logger.warning(f"Failed to save streamed Q/A Pair: {e}")
+
         yield "data: [DONE]\n\n"
 
     def _get_fallback_answer(self, language: str, query: str) -> str:
