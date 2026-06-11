@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="RAG-powered AI answering service with multimodal input support">
+    <title>RAG Answering Service</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
+
+    <!-- Header -->
+    <header id="app-header">
+        <div class="header-left">
+            <div class="logo">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="url(#grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <defs><linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#7c3aed"/><stop offset="100%" style="stop-color:#06b6d4"/></linearGradient></defs>
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                </svg>
+                <h1>RAG Answering Service</h1>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="status-indicators">
+                <span class="status-dot" id="status-db" title="Database"></span>
+                <span class="status-dot" id="status-redis" title="Redis"></span>
+                <span class="status-dot" id="status-llm" title="LLM"></span>
+                <span class="status-dot" id="status-gpu" title="GPU"></span>
+            </div>
+            <nav class="header-nav">
+                <button class="nav-btn active" data-tab="query" id="nav-query">Ask</button>
+                <button class="nav-btn" data-tab="documents" id="nav-documents">Documents</button>
+                <button class="nav-btn" data-tab="qa" id="nav-qa">Q&A Pairs</button>
+                <button class="nav-btn" data-tab="system" id="nav-system">System</button>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main id="app-main">
+
+        <!-- ═══════════ QUERY TAB ═══════════ -->
+        <section id="tab-query" class="tab-content active">
+            <div class="query-layout">
+                <!-- Input Area -->
+                <div class="card query-card">
+                    <div class="card-header">
+                        <h2>Ask a Question</h2>
+                        <span class="badge badge-info">Multimodal</span>
+                    </div>
+
+                    <!-- Text Input -->
+                    <div class="input-group">
+                        <textarea id="query-input" placeholder="Type your question in English, Hindi, or Hinglish..." rows="3"></textarea>
+                        <button id="btn-ask" class="btn btn-primary btn-glow">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                            Ask
+                        </button>
+                    </div>
+
+                    <!-- Options Row -->
+                    <div class="options-row">
+                        <div class="select-group">
+                            <label for="lang-select">Language</label>
+                            <select id="lang-select">
+                                <option value="">Auto-detect</option>
+                                <option value="en">English</option>
+                                <option value="hi">Hindi</option>
+                                <option value="hinglish">Hinglish</option>
+                            </select>
+                        </div>
+                        <div class="select-group">
+                            <label for="subject-select">Subject</label>
+                            <select id="subject-select">
+                                <option value="">All Subjects</option>
+                            </select>
+                        </div>
+                        <div class="select-group">
+                            <label for="topic-select">Topic</label>
+                            <select id="topic-select">
+                                <option value="">All Topics</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Media Upload Row -->
+                    <div class="media-row">
+                        <div class="drop-zone" id="audio-drop" tabindex="0">
+                            <input type="file" id="audio-file" accept="audio/*" hidden>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                            <span>Audio</span>
+                        </div>
+                        <div class="drop-zone" id="video-drop" tabindex="0">
+                            <input type="file" id="video-file" accept="video/*" hidden>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                            <span>Video</span>
+                        </div>
+                        <div class="drop-zone" id="file-drop" tabindex="0">
+                            <input type="file" id="ingest-file" accept=".pdf,.docx,.txt,.csv,.xlsx,.md,.json" multiple hidden>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                            <span>Ingest File</span>
+                        </div>
+                        <button class="drop-zone" id="btn-record" tabindex="0">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>
+                            <span>Record</span>
+                        </button>
+                    </div>
+
+                    <!-- Selected File Preview -->
+                    <div id="file-preview" class="file-preview hidden">
+                        <span id="file-preview-name"></span>
+                        <button id="file-preview-clear" class="btn-icon" title="Clear">✕</button>
+                    </div>
+                </div>
+
+                <!-- Response Area -->
+                <div id="response-area" class="card response-card hidden">
+                    <div class="card-header">
+                        <h2>Answer</h2>
+                        <div class="response-meta">
+                            <span id="resp-cached" class="badge badge-cached hidden">Cached</span>
+                            <span id="resp-latency" class="badge badge-muted"></span>
+                            <span id="resp-model" class="badge badge-muted"></span>
+                        </div>
+                    </div>
+
+                    <!-- Answer -->
+                    <div id="answer-text" class="answer-text"></div>
+
+                    <!-- Confidence Bars -->
+                    <div class="confidence-section">
+                        <div class="confidence-row">
+                            <label>Answer Confidence</label>
+                            <div class="confidence-bar-track">
+                                <div id="conf-answer-bar" class="confidence-bar"></div>
+                            </div>
+                            <span id="conf-answer-val" class="confidence-val">0%</span>
+                        </div>
+                        <div class="confidence-row">
+                            <label>Retrieval Confidence</label>
+                            <div class="confidence-bar-track">
+                                <div id="conf-retrieval-bar" class="confidence-bar"></div>
+                            </div>
+                            <span id="conf-retrieval-val" class="confidence-val">0%</span>
+                        </div>
+                    </div>
+
+                    <!-- Sources -->
+                    <div id="sources-section" class="sources-section hidden">
+                        <h3 class="sources-title">Sources</h3>
+                        <div id="sources-list" class="sources-list"></div>
+                    </div>
+                </div>
+
+                <!-- Loading Skeleton -->
+                <div id="loading-skeleton" class="card response-card hidden">
+                    <div class="skeleton-header">
+                        <div class="skeleton-line w-40"></div>
+                    </div>
+                    <div class="skeleton-body">
+                        <div class="skeleton-line w-100"></div>
+                        <div class="skeleton-line w-90"></div>
+                        <div class="skeleton-line w-75"></div>
+                        <div class="skeleton-line w-60"></div>
+                    </div>
+                    <div class="skeleton-bars">
+                        <div class="skeleton-line w-50"></div>
+                        <div class="skeleton-line w-40"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══════════ DOCUMENTS TAB ═══════════ -->
+        <section id="tab-documents" class="tab-content">
+            <div class="qa-layout">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Uploaded Documents</h2>
+                        <button id="btn-refresh-docs" class="btn btn-ghost btn-sm">Refresh</button>
+                    </div>
+                    <div class="panel-body">
+                        <div id="documents-list" style="display: flex; flex-direction: column; gap: 12px; padding: 16px;">
+                            <div class="empty-state">
+                                <p>Loading documents...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══════════ Q/A PAIRS TAB ═══════════ -->
+        <section id="tab-qa" class="tab-content">
+            <div class="qa-layout">
+                <!-- Add Q/A Form -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Add Q/A Pair</h2>
+                    </div>
+                    <div class="qa-form">
+                        <div class="form-group">
+                            <label for="qa-question">Question</label>
+                            <input type="text" id="qa-question" placeholder="Enter the question...">
+                        </div>
+                        <div class="form-group">
+                            <label for="qa-answer">Answer</label>
+                            <textarea id="qa-answer" rows="3" placeholder="Enter the answer..."></textarea>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="qa-language">Language</label>
+                                <select id="qa-language">
+                                    <option value="en">English</option>
+                                    <option value="hi">Hindi</option>
+                                    <option value="hinglish">Hinglish</option>
+                                </select>
+                            </div>
+                            <button id="btn-add-qa" class="btn btn-primary">Add Pair</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Q/A List -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Existing Q/A Pairs</h2>
+                        <div class="search-box">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            <input type="text" id="qa-search" placeholder="Search pairs...">
+                        </div>
+                    </div>
+                    <div id="qa-list" class="qa-list">
+                        <div class="empty-state">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                            <p>No Q/A pairs yet. Add one above or upload a file.</p>
+                        </div>
+                    </div>
+                    <div class="qa-pagination">
+                        <button id="qa-prev" class="btn btn-ghost btn-sm" disabled>← Prev</button>
+                        <span id="qa-page-info">Page 1</span>
+                        <button id="qa-next" class="btn btn-ghost btn-sm">Next →</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══════════ SYSTEM TAB ═══════════ -->
+        <section id="tab-system" class="tab-content">
+            <div class="system-layout">
+                <!-- Health -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>System Health</h2>
+                        <button id="btn-refresh-health" class="btn btn-ghost btn-sm">Refresh</button>
+                    </div>
+                    <div id="health-grid" class="health-grid">
+                        <div class="health-item">
+                            <div class="health-icon" id="health-db-icon">●</div>
+                            <div class="health-label">PostgreSQL</div>
+                            <div class="health-status" id="health-db-status">Checking...</div>
+                        </div>
+                        <div class="health-item">
+                            <div class="health-icon" id="health-redis-icon">●</div>
+                            <div class="health-label">Redis</div>
+                            <div class="health-status" id="health-redis-status">Checking...</div>
+                        </div>
+                        <div class="health-item">
+                            <div class="health-icon" id="health-llm-icon">●</div>
+                            <div class="health-label">LLM API</div>
+                            <div class="health-status" id="health-llm-status">Checking...</div>
+                        </div>
+                        <div class="health-item">
+                            <div class="health-icon" id="health-gpu-icon">●</div>
+                            <div class="health-label">GPU (MPS)</div>
+                            <div class="health-status" id="health-gpu-status">Checking...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Metrics -->
+                <div class="card">
+                    <div class="card-header"><h2>Queue & Metrics</h2></div>
+                    <div id="metrics-grid" class="metrics-grid">
+                        <div class="metric-card">
+                            <div class="metric-value" id="metric-active">0</div>
+                            <div class="metric-label">Active Requests</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-value" id="metric-queued">0</div>
+                            <div class="metric-label">Queued</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-value" id="metric-processed">0</div>
+                            <div class="metric-label">Total Processed</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-value" id="metric-cost">$0.00</div>
+                            <div class="metric-label">Daily Cost (equiv)</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="delete-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content card">
+            <h3>Delete Q/A Pair</h3>
+            <p>Are you sure you want to delete this Q/A pair? This action can be undone via restore.</p>
+            <div class="modal-actions">
+                <button id="modal-cancel" class="btn btn-ghost">Cancel</button>
+                <button id="modal-confirm" class="btn btn-danger">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js?v=5"></script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+INFO:     Will watch for changes in these directories: ['/Users/ravindersharma/Desktop/RAG based chatbot']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [31347] using WatchFiles
+INFO:     Started server process [31349]
+INFO:     Waiting for application startup.
+2026-06-11 13:52:14 | INFO     | app.main | 🚀 Starting RAG Answering Service v1.0.0
+2026-06-11 13:52:14 | INFO     | app.main | Initializing database...
+2026-06-11 13:52:14 | INFO     | app.main | ✅ Database initialized
+2026-06-11 13:52:14 | INFO     | app.main | ✅ Redis connected
+2026-06-11 13:52:14 | INFO     | app.main | Initializing orchestrator...
+2026-06-11 13:52:17 | INFO     | app.services.rag.embedder | Loading sentence-transformers model 'multi-qa-MiniLM-L6-cos-v1' …
+2026-06-11 13:52:17 | INFO     | sentence_transformers.base.model | No device provided, using mps
+2026-06-11 13:52:17 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/modules.json "HTTP/1.1 307 Temporary Redirect"
+2026-06-11 13:52:17 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/b207367332321f8e44f96e224ef15bc607f4dbf0/modules.json "HTTP/1.1 200 OK"
+2026-06-11 13:52:17 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/config_sentence_transformers.json "HTTP/1.1 307 Temporary Redirect"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-06-11 13:52:17 | WARNING  | huggingface_hub.utils._http | Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-06-11 13:52:17 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/b207367332321f8e44f96e224ef15bc607f4dbf0/config_sentence_transformers.json "HTTP/1.1 200 OK"
+2026-06-11 13:52:17 | INFO     | sentence_transformers.base.model | Loading SentenceTransformer model from sentence-transformers/multi-qa-MiniLM-L6-cos-v1.
+2026-06-11 13:52:18 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/config_sentence_transformers.json "HTTP/1.1 307 Temporary Redirect"
+2026-06-11 13:52:18 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/b207367332321f8e44f96e224ef15bc607f4dbf0/config_sentence_transformers.json "HTTP/1.1 200 OK"
+2026-06-11 13:52:18 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-06-11 13:52:18 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/b207367332321f8e44f96e224ef15bc607f4dbf0/README.md "HTTP/1.1 200 OK"
+2026-06-11 13:52:18 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/modules.json "HTTP/1.1 307 Temporary Redirect"
+2026-06-11 13:52:18 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/b207367332321f8e44f96e224ef15bc607f4dbf0/modules.json "HTTP/1.1 200 OK"
+2026-06-11 13:52:18 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/sentence_bert_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-06-11 13:52:18 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/b207367332321f8e44f96e224ef15bc607f4dbf0/sentence_bert_config.json "HTTP/1.1 200 OK"
+2026-06-11 13:52:19 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/adapter_config.json "HTTP/1.1 404 Not Found"
+2026-06-11 13:52:19 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-06-11 13:52:19 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/b207367332321f8e44f96e224ef15bc607f4dbf0/config.json "HTTP/1.1 200 OK"
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 10550.03it/s]
+2026-06-11 13:52:19 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-06-11 13:52:20 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/preprocessor_config.json "HTTP/1.1 404 Not Found"
+2026-06-11 13:52:20 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/video_preprocessor_config.json "HTTP/1.1 404 Not Found"
+2026-06-11 13:52:20 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/preprocessor_config.json "HTTP/1.1 404 Not Found"
+2026-06-11 13:52:21 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-06-11 13:52:21 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/b207367332321f8e44f96e224ef15bc607f4dbf0/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-06-11 13:52:21 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-06-11 13:52:21 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/b207367332321f8e44f96e224ef15bc607f4dbf0/config.json "HTTP/1.1 200 OK"
+2026-06-11 13:52:21 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-06-11 13:52:21 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/b207367332321f8e44f96e224ef15bc607f4dbf0/config.json "HTTP/1.1 200 OK"
+2026-06-11 13:52:21 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-06-11 13:52:21 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/b207367332321f8e44f96e224ef15bc607f4dbf0/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-06-11 13:52:22 | INFO     | httpx | HTTP Request: GET https://huggingface.co/api/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-06-11 13:52:22 | INFO     | httpx | HTTP Request: GET https://huggingface.co/api/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-06-11 13:52:22 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/resolve/main/1_Pooling/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-06-11 13:52:22 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1/b207367332321f8e44f96e224ef15bc607f4dbf0/1_Pooling%2Fconfig.json "HTTP/1.1 200 OK"
+2026-06-11 13:52:23 | INFO     | httpx | HTTP Request: GET https://huggingface.co/api/models/sentence-transformers/multi-qa-MiniLM-L6-cos-v1 "HTTP/1.1 200 OK"
+2026-06-11 13:52:23 | INFO     | app.services.rag.embedder | Model loaded successfully (dim=384).
+2026-06-11 13:52:23 | INFO     | app.main | ✅ Orchestrator initialized
+2026-06-11 13:52:23 | INFO     | app.main | ✅ RAG Answering Service is ready!
+2026-06-11 13:52:23 | INFO     | app.main |    📊 Max concurrent requests: 50
+2026-06-11 13:52:23 | INFO     | app.main |    🧠 LLM model: gpt-5-nano
+2026-06-11 13:52:23 | INFO     | app.main |    📐 Embedding model: multi-qa-MiniLM-L6-cos-v1
+INFO:     Application startup complete.
+2026-06-11 13:56:11 | INFO     | app.core.orchestrator | [7228223d-312c-425f-bc61-b7465f2757ed] Detected language: en. English question: What is the capital of France?
+2026-06-11 13:56:11 | INFO     | app.core.orchestrator | [7228223d-312c-425f-bc61-b7465f2757ed] Retrieved 10 chunks, confidence: 0.00
+INFO:     127.0.0.1:54324 - "POST /api/v1/ask HTTP/1.1" 200 OK
+/Users/ravindersharma/Desktop/RAG based chatbot/app/api/middleware/rate_limiter.py:43: RuntimeWarning: coroutine 'ConnectionPool.disconnect' was never awaited
+  if self._redis is None or self._redis.connection_pool.disconnect():
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+2026-06-11 13:56:55 | INFO     | app.core.orchestrator | [9134b42d-b25a-472f-a3d9-9d1f5f867481] Detected language: en. English question: force_error
+Batches:   0%|          | 0/1 [00:00<?, ?it/s]Batches: 100%|██████████| 1/1 [00:00<00:00,  1.92it/s]Batches: 100%|██████████| 1/1 [00:00<00:00,  1.92it/s]
+2026-06-11 13:56:56 | INFO     | app.core.orchestrator | [9134b42d-b25a-472f-a3d9-9d1f5f867481] Retrieved 10 chunks, confidence: 0.13
+INFO:     127.0.0.1:54333 - "POST /api/v1/ask HTTP/1.1" 200 OK

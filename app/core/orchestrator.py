@@ -1,0 +1,468 @@
+"""
+Main orchestrator that coordinates the entire request pipeline:
+Input → Media Processing → Language Detection → RAG Retrieval → Generation → Confidence Check → Response
+"""
+
+import asyncio
+import logging
+import time
+import uuid
+from dataclasses import dataclass
+from typing import Any
+
+from app.config import get_settings
+from app.core.cost_tracker import RequestCost, get_cost_tracker
+from app.core.queue_manager import get_queue_manager
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class OrchestratorResult:
+    """Complete result from the orchestration pipeline."""
+    request_id: str
+    answer: str
+    language: str
+    confidence: float
+    retrieval_confidence: float
+    sources: list[dict[str, Any]]
+    model_used: str
+    latency_ms: int
+    cached: bool = False
+    input_text: str = ""
+    detected_language: str = ""
+    fallback_used: bool = False
+    cost: RequestCost | None = None
+
+
+class Orchestrator:
+    """
+    Central orchestrator that routes requests through the processing pipeline.
+    
+    Pipeline stages:
+    1. Input normalization (text/audio/video/file → text)
+    2. Language detection
+    3. Cache check
+    4. Topic routing
+    5. Hybrid retrieval (vector + BM25)
+    6. Model selection (cheap vs strong based on confidence)
+    7. Answer generation
+    8. Confidence scoring (80% match check)
+    9. Fallback handling ("I don't know")
+    10. Cost tracking + logging
+    """
+
+    def __init__(self):
+        self._settings = get_settings()
+        self._embedding_service = None
+        self._retrieval_service = None
+        self._llm_generator = None
+        self._confidence_scorer = None
+        self._model_router = None
+        self._redis = None
+
+    async def init(self, db_session_factory, redis_client=None):
+        """Initialize all services. Call once at app startup."""
+        from app.services.rag.embedder import EmbeddingService
+        from app.services.rag.retriever import RetrievalService
+        from app.services.llm.generator import LLMGenerator
+        from app.services.llm.confidence import ConfidenceScorer
+
+        redis_url = self._settings.redis_url if hasattr(self._settings, 'redis_url') else 'redis://localhost:6379/0'
+        self._embedding_service = EmbeddingService(redis_url=redis_url)
+        self._retrieval_service = RetrievalService(db_session_factory)
+        self._llm_generator = LLMGenerator()
+        self._confidence_scorer = ConfidenceScorer()
+        self._redis = redis_client
+        self._db_session_factory = db_session_factory
+
+    async def process_text_query(
+        self,
+        text: str,
+        language: str | None = None,
+        subject_filter: str | None = None,
+        topic_filter: str | None = None,
+    ) -> OrchestratorResult:
+        """
+        Process a text query through the full RAG pipeline (English-centric).
+        
+        Args:
+            text: The user's question
+            language: Override language (auto-detected if None)
+            subject_filter: Restrict retrieval to a subject
+            topic_filter: Restrict retrieval to a topic
+            
+        Returns:
+            OrchestratorResult with answer, confidence, sources, etc.
+        """
+        request_id = str(uuid.uuid4())
+        start_time = time.time()
+        cost = RequestCost(request_id=request_id)
+
+        try:
+            # ── Step 1: Translate to English ────────────────────
+            from app.services.language.translator import TranslatorService
+            translator = TranslatorService()
+            trans_result = await translator.translate_to_english(text)
+            english_question = trans_result["english_text"]
+            original_language = language or trans_result["original_language"]
+            
+            logger.info(f"[{request_id}] Detected language: {original_language}. "
+                       f"English question: {english_question}")
+
+            # ── Step 2: Cache Check (Exact Match) ───────────────
+            cached_answer = await self._check_cache(english_question, original_language, topic_filter)
+            if cached_answer:
+                latency = int((time.time() - start_time) * 1000)
+                return OrchestratorResult(
+                    request_id=request_id,
+                    answer=cached_answer["answer"],
+                    language=original_language,
+                    confidence=cached_answer["confidence"],
+                    retrieval_confidence=cached_answer["retrieval_confidence"],
+                    sources=cached_answer["sources"],
+                    model_used=cached_answer["model_used"],
+                    latency_ms=latency,
+                    cached=True,
+                    input_text=text,
+                    detected_language=original_language,
+                )
+
+            # ── Step 3: Embed English Question ──────────────────
+            query_embedding = await self._embedding_service.embed_query(english_question)
+            cost.embedding_tokens = len(english_question.split()) * 2
+
+            # ── Step 4: Check Q/A Pairs ─────────────────────────
+            qa_results = await self._retrieval_service.retrieve_qa_pairs(
+                query_embedding=query_embedding,
+                top_k=1,
+                subject_filter=subject_filter,
+                topic_filter=topic_filter
+            )
+
+            # High confidence threshold for returning a QA Pair
+            qa_confidence_threshold = 0.85
+            if qa_results and qa_results[0].similarity_score >= qa_confidence_threshold:
+                best_qa = qa_results[0]
+                logger.info(f"[{request_id}] Q/A Pair match found! Confidence: {best_qa.similarity_score:.2f}")
+                
+                # Fetch exact answer from DB (content has question + answer)
+                async with self._db_session_factory() as session:
+                    from app.db.models import QAPair
+                    from sqlalchemy import select
+                    stmt = select(QAPair).where(QAPair.id == best_qa.chunk_id)
+                    res = await session.execute(stmt)
+                    qa_row = res.scalar_one_or_none()
+                    
+                if qa_row:
+                    english_answer = qa_row.answer
+                    
+                    # ── Retranslate Answer ────────────────────────
+                    final_answer = await translator.translate_from_english(english_answer, original_language)
+                    
+                    # Cache in redis for exact subsequent queries
+                    result_dict = {
+                        "answer": final_answer,
+                        "confidence": best_qa.similarity_score,
+                        "retrieval_confidence": best_qa.similarity_score,
+                        "sources": [],
+                        "model_used": "qa_pair_cache"
+                    }
+                    await self._cache_result(english_question, original_language, topic_filter, result_dict)
+                    
+                    latency = int((time.time() - start_time) * 1000)
+                    cost.total_latency_ms = latency
+                    return OrchestratorResult(
+                        request_id=request_id,
+                        answer=final_answer,
+                        language=original_language,
+                        confidence=best_qa.similarity_score,
+                        retrieval_confidence=best_qa.similarity_score,
+                        sources=[],
+                        model_used="qa_pair_cache",
+                        latency_ms=latency,
+                        cached=True,
+                        input_text=text,
+                        detected_language=original_language,
+                        cost=cost
+                    )
+
+            # ── Step 5: Hybrid RAG Retrieval ────────────────────
+            chunks = await self._retrieval_service.retrieve(
+                query=english_question,
+                query_embedding=query_embedding,
+                top_k=10,
+                subject_filter=subject_filter,
+                topic_filter=topic_filter,
+            )
+
+            retrieval_confidence = self._retrieval_service.compute_confidence(chunks)
+            logger.info(f"[{request_id}] Retrieved {len(chunks)} chunks, confidence: {retrieval_confidence:.2f}")
+
+            # Confidence Gate — Early Exit
+            if retrieval_confidence < self._settings.retrieval_confidence_low:
+                latency = int((time.time() - start_time) * 1000)
+                fallback_answer = self._get_fallback_answer(original_language, text)
+                cost.total_latency_ms = latency
+                return OrchestratorResult(
+                    request_id=request_id,
+                    answer=fallback_answer,
+                    language=original_language,
+                    confidence=retrieval_confidence,
+                    retrieval_confidence=retrieval_confidence,
+                    sources=[],
+                    model_used="none (low confidence fallback)",
+                    latency_ms=latency,
+                    input_text=text,
+                    detected_language=original_language,
+                    fallback_used=True,
+                    cost=cost,
+                )
+
+            # ── Step 6: Model Selection & Generation ────────────
+            model = self._settings.openai_model
+            cost.model_used = model
+
+            valid_chunks = [c for c in chunks if c.similarity_score >= 0.25][:2]
+            
+            if not valid_chunks:
+                latency = int((time.time() - start_time) * 1000)
+                return OrchestratorResult(
+                    request_id=request_id,
+                    answer=self._get_fallback_answer(original_language, text),
+                    language=original_language,
+                    confidence=0.0,
+                    retrieval_confidence=retrieval_confidence,
+                    sources=[],
+                    model_used="none (low context match)",
+                    latency_ms=latency,
+                    input_text=text,
+                    detected_language=original_language,
+                    fallback_used=True,
+                    cost=cost,
+                )
+
+            context_block = "\n\n".join(c.content for c in valid_chunks)
+            generation_result = await self._llm_generator.generate(
+                prompt=english_question,
+                context=context_block,
+                language="en", # Always generate in English internally
+                model=model,
+            )
+            cost.llm_input_tokens = generation_result.total_tokens // 2
+            cost.llm_output_tokens = generation_result.total_tokens - cost.llm_input_tokens
+            english_answer = generation_result.answer
+
+            # ── Step 7: Confidence Scoring ──────────────────────
+            try:
+                texts_to_embed = [english_answer] + [c.content for c in valid_chunks[:2]]
+                embeddings = await self._embedding_service.embed_batch(texts_to_embed)
+                answer_embedding = embeddings[0]
+                source_embeddings = embeddings[1:]
+                confidence_result = self._confidence_scorer.score_answer(
+                    answer_embedding=answer_embedding,
+                    source_embeddings=source_embeddings,
+                    retrieval_scores=[c.similarity_score for c in valid_chunks[:2]],
+                    threshold=self._settings.answer_match_threshold,
+                )
+                answer_confidence = confidence_result.answer_confidence
+                meets_threshold = confidence_result.meets_threshold
+            except Exception as e:
+                logger.warning(f"[{request_id}] Confidence scoring failed, falling back: {e}")
+                answer_confidence = min(retrieval_confidence * 1.1, 1.0)
+                meets_threshold = answer_confidence >= self._settings.answer_match_threshold
+
+            # ── Step 8: Store Q/A Pair ──────────────────────────
+            try:
+                # Store the successful English Q/A pair
+                async with self._db_session_factory() as session:
+                    from app.db.models import QAPair
+                    from sqlalchemy import select
+                    
+                    # Prevent exact duplicate insertions
+                    stmt = select(QAPair).where(QAPair.question == english_question)
+                    res = await session.execute(stmt)
+                    existing_qa = res.scalar_one_or_none()
+                    
+                    if not existing_qa:
+                        new_qa = QAPair(
+                            question=english_question,
+                            answer=english_answer,
+                            question_embedding=query_embedding,
+                            answer_embedding=answer_embedding,
+                            combined_embedding=query_embedding, # simplification
+                            language="en",
+                            source_type="rag_generated"
+                        )
+                        session.add(new_qa)
+                        await session.commit()
+            except Exception as e:
+                logger.warning(f"[{request_id}] Failed to save Q/A Pair: {e}")
+
+            # ── Step 9: Final Confidence Gate & Retranslate ───
+            final_answer = english_answer
+            if not meets_threshold:
+                logger.warning(
+                    f"[{request_id}] Answer confidence {answer_confidence:.2f} "
+                    f"below threshold {self._settings.answer_match_threshold}"
+                )
+                disclaimer = self._get_low_confidence_disclaimer(original_language)
+                final_answer = f"{final_answer}\n\n{disclaimer}"
+
+            final_answer = await translator.translate_from_english(final_answer, original_language)
+
+
+            # ── Step 10: Cache + Log ──────────────────────────
+            latency = int((time.time() - start_time) * 1000)
+            cost.total_latency_ms = latency
+
+            # Cache the result — only include valid_chunks (actually used)
+            await self._cache_result(text, language, topic_filter, {
+                "answer": final_answer,
+                "confidence": answer_confidence,
+                "retrieval_confidence": retrieval_confidence,
+                "sources": [{"chunk_id": str(c.chunk_id), "content_preview": c.content[:200],
+                            "similarity": c.similarity_score, "source_file": c.source_file,
+                            "topic": c.topic} for c in valid_chunks],
+                "model_used": generation_result.model_used,
+            })
+
+            # Track cost
+            cost_tracker = await get_cost_tracker()
+            cost = cost_tracker.calculate_cost(cost)
+            await cost_tracker.log_cost(cost)
+
+            # Only report chunks that were actually used for generation
+            sources = [
+                {
+                    "chunk_id": str(c.chunk_id),
+                    "content_preview": c.content[:200],
+                    "similarity": round(c.similarity_score, 3),
+                    "source_file": c.source_file,
+                    "topic": c.topic,
+                }
+                for c in valid_chunks
+            ]
+
+            # Log query for audit trail
+            await self._log_query(
+                request_id=request_id,
+                input_text=text,
+                detected_language=language,
+                retrieved_chunk_ids=[c.chunk_id for c in valid_chunks],
+                answer=final_answer,
+                retrieval_confidence=retrieval_confidence,
+                answer_confidence=answer_confidence,
+                model_used=generation_result.model_used,
+                total_tokens=generation_result.total_tokens,
+                latency_ms=latency,
+            )
+
+            return OrchestratorResult(
+                request_id=request_id,
+                answer=final_answer,
+                language=original_language,
+                confidence=answer_confidence,
+                retrieval_confidence=retrieval_confidence,
+                sources=sources,
+                model_used=generation_result.model_used,
+                latency_ms=latency,
+                input_text=text,
+                detected_language=original_language,
+                fallback_used=not meets_threshold,
+                cost=cost,
+            )
+
+        except Exception as e:
+            latency = int((time.time() - start_time) * 1000)
+            logger.error(f"[{request_id}] Pipeline error: {e}", exc_info=True)
+            raise
+
+    def _get_fallback_answer(self, language: str, query: str) -> str:
+        """Generate a structured 'I don't know' response in the appropriate language."""
+        if language == "hi":
+            return (
+                "मुझे इस प्रश्न का उत्तर देने के लिए पर्याप्त जानकारी नहीं मिली।\n\n"
+                "कृपया:\n"
+                "1. अपना प्रश्न अधिक विशिष्ट बनाएं\n"
+                "2. संबंधित दस्तावेज़ अपलोड करें\n"
+                "3. कोई विशेष विषय चुनें"
+            )
+        elif language == "hinglish":
+            return (
+                "Mujhe is question ka answer dene ke liye enough information nahi mili.\n\n"
+                "Please:\n"
+                "1. Apna question thoda specific karein\n"
+                "2. Related documents upload karein\n"
+                "3. Koi specific topic select karein"
+            )
+        else:
+            return (
+                "I don't have enough information to answer this question accurately.\n\n"
+                "You could try:\n"
+                "1. Making your question more specific\n"
+                "2. Uploading relevant documents\n"
+                "3. Selecting a specific subject or topic"
+            )
+
+    def _get_low_confidence_disclaimer(self, language: str) -> str:
+        """Disclaimer for low-confidence answers."""
+        if language == "hi":
+            return "⚠️ यह उत्तर कम विश्वास स्तर पर आधारित है। कृपया स्रोतों की जांच करें।"
+        elif language == "hinglish":
+            return "⚠️ Yeh answer low confidence level par based hai. Please sources verify karein."
+        else:
+            return "⚠️ This answer has low confidence. Please verify against the sources provided."
+
+    async def _check_cache(self, text: str, language: str, topic: str | None) -> dict | None:
+        """Check Redis cache for a previously computed answer."""
+        if not self._redis:
+            return None
+        try:
+            import hashlib
+            import json
+            cache_key = f"answer:{hashlib.sha256(f'{text}:{language}:{topic}'.encode()).hexdigest()[:32]}"
+            cached = await self._redis.get(cache_key)
+            if cached:
+                logger.info(f"Cache hit for query")
+                return json.loads(cached)
+        except Exception as e:
+            logger.debug(f"Cache check failed: {e}")
+        return None
+
+    async def _cache_result(self, text: str, language: str, topic: str | None, result: dict):
+        """Cache the answer in Redis with 1-hour TTL."""
+        if not self._redis:
+            return
+        try:
+            import hashlib
+            import json
+            cache_key = f"answer:{hashlib.sha256(f'{text}:{language}:{topic}'.encode()).hexdigest()[:32]}"
+            await self._redis.setex(cache_key, 3600, json.dumps(result, default=str))
+        except Exception as e:
+            logger.debug(f"Cache write failed: {e}")
+
+
+# Global singleton
+_orchestrator: Orchestrator | None = None
+
+
+async def get_orchestrator() -> Orchestrator:
+    """Get the global Orchestrator instance."""
+    global _orchestrator
+    if _orchestrator is None:
+        _orchestrator = Orchestrator()
+    return _orchestrator
+
+
+async def shutdown_orchestrator() -> None:
+    """Cleanup orchestrator resources. Call during app shutdown."""
+    global _orchestrator
+    if _orchestrator is not None:
+        if _orchestrator._redis:
+            try:
+                await _orchestrator._redis.close()
+            except Exception:
+                pass
+        _orchestrator = None
+        logger.info("Orchestrator shutdown complete")
