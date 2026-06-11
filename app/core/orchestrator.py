@@ -165,7 +165,7 @@ class Orchestrator:
                     english_answer = qa_row.answer
                     
                     # ── Retranslate Answer ────────────────────────
-                    final_answer = await translator.translate_from_english(english_answer, original_language)
+                    final_answer = await self._translator_service.translate_from_english(english_answer, original_language)
                     
                     # Cache in redis for exact subsequent queries
                     result_dict = {
@@ -448,6 +448,53 @@ class Orchestrator:
             await self._redis.setex(cache_key, 3600, json.dumps(result, default=str))
         except Exception as e:
             logger.debug(f"Cache write failed: {e}")
+
+    async def _log_query(
+        self,
+        request_id: str,
+        input_text: str,
+        detected_language: str,
+        retrieved_chunk_ids: list,
+        answer: str,
+        retrieval_confidence: float,
+        answer_confidence: float,
+        model_used: str,
+        total_tokens: int,
+        latency_ms: int,
+    ) -> None:
+        """Log query execution to the audit database."""
+        try:
+            async with self._db_session_factory() as session:
+                from app.db.models import QueryLog
+                from uuid import UUID as UUIDType
+                
+                # Convert chunk IDs to proper UUID format
+                chunk_ids = []
+                for chunk_id in retrieved_chunk_ids:
+                    try:
+                        if isinstance(chunk_id, str):
+                            chunk_ids.append(UUIDType(chunk_id))
+                        else:
+                            chunk_ids.append(chunk_id)
+                    except (ValueError, TypeError):
+                        pass
+                
+                query_log = QueryLog(
+                    input_text=input_text,
+                    input_type="text",
+                    detected_language=detected_language,
+                    retrieved_chunk_ids=chunk_ids if chunk_ids else None,
+                    answer=answer,
+                    retrieval_confidence=retrieval_confidence,
+                    answer_confidence=answer_confidence,
+                    model_used=model_used,
+                    total_tokens=total_tokens,
+                    latency_ms=latency_ms,
+                )
+                session.add(query_log)
+                await session.commit()
+        except Exception as e:
+            logger.warning(f"[{request_id}] Failed to log query: {e}")
 
 
 # Global singleton
