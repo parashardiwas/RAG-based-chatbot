@@ -103,24 +103,35 @@ Text: "{text}"
             return text
 
     async def compare_answers(self, question: str, answer_a: str, answer_b: str) -> bool:
-        """Compare two answers to see if they mean the same thing for a given question."""
-        prompt = f"""You are an automated grading system.
-Question: "{question}"
-Answer A (User): "{answer_a}"
-Answer B (System Truth): "{answer_b}"
+        """
+        Compare two answers for factual equivalence, ignoring phrasing differences.
+        Both inputs must already be in English before calling this method.
+        """
+        prompt = f"""You are a semantic fact-checker. Your only job is to determine if two answers convey the same core facts.
 
-Do Answer A and Answer B convey the same core factual meaning or truth in response to the Question?
-Output EXACTLY 'YES' or 'NO' and nothing else.
-"""
+RULES:
+- Ignore all differences in phrasing, word order, verbosity, or style.
+- Focus ONLY on whether the key factual claim(s) in Answer A are present in Answer B.
+- A short, correct answer (e.g. "Paris") MUST match a longer one ("The capital is Paris.").
+- Partial answers that contain the correct fact still count as a match.
+- Output ONLY the single word YES or NO. No explanation, no punctuation.
+
+Question: {question}
+Answer A: {answer_a}
+Answer B: {answer_b}
+
+Are the core facts in Answer A and Answer B equivalent?"""
+
         try:
             client = self._get_client()
             response = await client.chat.completions.create(
                 model=self._model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
+                max_tokens=5,  # We only need YES or NO — cap tokens for speed
             )
             result = response.choices[0].message.content.strip().upper()
-            return "YES" in result
+            return result.startswith("YES")
         except Exception as e:
             logger.error(f"Comparison failed: {e}")
             return False

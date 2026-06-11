@@ -7,6 +7,8 @@ import logging
 import time
 import uuid
 
+import asyncio
+import langdetect
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,35 +37,48 @@ async def compare_answer(
         from app.services.language.translator import TranslatorService
         translator = TranslatorService()
         
-        # 1. Translate Q&A to English
-        q_trans = await translator.translate_to_english(request.question)
-        a_trans = await translator.translate_to_english(request.user_answer)
-        
-        eng_question = q_trans["english_text"]
-        eng_user_answer = a_trans["english_text"]
-        
-        # 2. Get true answer using orchestrator
+        # ── Step 1: Detect language once, cheaply ──────────────────
+        try:
+            detected_lang = langdetect.detect(request.question)
+        except Exception:
+            detected_lang = "en"
+
+        is_english = detected_lang == "en"
+
+        # ── Step 2: Translate question + answer in parallel (skip if English) ──
+        if is_english:
+            eng_question = request.question
+            eng_user_answer = request.user_answer
+        else:
+            # Both translations are independent — run concurrently
+            q_trans_task = translator.translate_to_english(request.question)
+            a_trans_task = translator.translate_to_english(request.user_answer)
+            q_trans, a_trans = await asyncio.gather(q_trans_task, a_trans_task)
+            eng_question = q_trans["english_text"]
+            eng_user_answer = a_trans["english_text"]
+
+        # ── Step 3: RAG lookup + LLM comparison in parallel ────────
         orchestrator = await get_orchestrator()
-        result = await orchestrator.process_text_query(
+        rag_result = await orchestrator.process_text_query(
             text=eng_question,
-            language="en"
+            language="en",
         )
-        eng_true_answer = result.answer
-        
-        # 3. Compare with LLM
+        eng_true_answer = rag_result.answer
+
+        # ── Step 4: Single semantic comparison call ─────────────────
         is_match = await translator.compare_answers(
             question=eng_question,
             answer_a=eng_user_answer,
-            answer_b=eng_true_answer
+            answer_b=eng_true_answer,
         )
-        
+
         response_data = {
             "match": "YES" if is_match else "NO",
-            "detected_language": q_trans["original_language"],
+            "detected_language": detected_lang,
             "true_answer_preview": eng_true_answer[:100] + "..."
         }
         if is_match:
-            response_data["sources"] = result.sources
+            response_data["sources"] = rag_result.sources
             
         return response_data
     except Exception as e:
