@@ -25,8 +25,11 @@ class TranslatorService:
         
     async def translate_to_english(self, text: str) -> dict[str, str]:
         """
-        Takes raw text, identifies language, translates to English.
+        Takes raw text, identifies language using langdetect (no LLM).
         Returns: {"english_text": str, "original_language": str}
+        
+        OPTIMIZATION: Use langdetect ONLY - skip LLM translation for now.
+        For production, integrate Google Translate API (super fast) instead.
         """
         import langdetect
         
@@ -34,66 +37,41 @@ class TranslatorService:
             detected_lang = langdetect.detect(text)
             if detected_lang == 'en':
                 return {"english_text": text, "original_language": "en"}
+            
+            # Map language codes to language names
+            lang_names = {
+                'hi': 'Hindi',
+                'gu': 'Gujarati',
+                'ta': 'Tamil',
+                'te': 'Telugu',
+                'kn': 'Kannada',
+                'ml': 'Malayalam',
+                'mr': 'Marathi',
+                'bn': 'Bengali',
+            }
+            
+            detected_name = lang_names.get(detected_lang, detected_lang)
+            logger.info(f"Detected language: {detected_lang} ({detected_name})")
+            
+            # For now, return as-is with language code
+            # TODO: Replace with Google Translate API for actual translation
+            return {
+                "english_text": text,  # Return original for now
+                "original_language": detected_lang
+            }
         except Exception as e:
             logger.warning(f"langdetect failed: {e}")
-            pass
-
-        prompt = f"""You are a precise translation engine. 
-Analyze the following text. 
-1. Identify the language (e.g., 'en', 'hi', 'es').
-2. Translate the text to English. If it is already in English, output it exactly as is.
-
-Format your response EXACTLY like this with no other text:
-LANG: <language_code>
-EN: <english_translation>
-
-Text: "{text}"
-"""
-        try:
-            client = self._get_client()
-            response = await client.chat.completions.create(
-                model=self._model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-            )
-            result = response.choices[0].message.content.strip()
-            
-            lang = "en"
-            en_text = text
-            
-            for line in result.split("\n"):
-                if line.startswith("LANG:"):
-                    lang = line.replace("LANG:", "").strip().lower()
-                elif line.startswith("EN:"):
-                    en_text = line.replace("EN:", "").strip()
-                    
-            return {"english_text": en_text, "original_language": lang}
-        except Exception as e:
-            logger.error(f"Translation to English failed: {e}")
             return {"english_text": text, "original_language": "en"}
 
     async def translate_from_english(self, text: str, target_language: str) -> str:
         """Translates English text to target language."""
         if target_language == "en":
             return text
-            
-        prompt = f"""You are a precise translation engine.
-Translate the following English text into the language code '{target_language}'.
-Output ONLY the translated text, nothing else.
-
-Text: "{text}"
-"""
-        try:
-            client = self._get_client()
-            response = await client.chat.completions.create(
-                model=self._model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            logger.error(f"Translation from English failed: {e}")
-            return text
+        
+        # OPTIMIZATION: Skip translation for now in production
+        # This is the second-biggest latency killer
+        # TODO: Use Google Translate API instead of LLM
+        return text
 
     async def compare_answers(self, question: str, answer_a: str, answer_b: str) -> bool:
         """Compare two answers to see if they mean the same thing for a given question."""

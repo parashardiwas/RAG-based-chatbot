@@ -132,6 +132,7 @@ LEFT JOIN topics t ON dc.topic_id = t.id
 LEFT JOIN subjects s ON dc.subject_id = s.id
 WHERE 1 = 1
     {filters}
+LIMIT 1000
 """
 
 _BM25_CORPUS_QA_SQL = """
@@ -143,6 +144,7 @@ LEFT JOIN topics t ON qa.topic_id = t.id
 LEFT JOIN subjects s ON qa.subject_id = s.id
 WHERE qa.is_deleted = false
     {filters}
+LIMIT 500
 """
 
 
@@ -208,12 +210,14 @@ class RetrievalService:
         """
         filters = self._build_filter_clauses(subject_filter, topic_filter)
 
-        # Run both search strategies.
-        vector_results = await self._vector_search(
-            query_embedding, top_k=top_k * 2, filters=filters
-        )
-        bm25_results = await self._bm25_search(
-            query, top_k=top_k * 2, filters=filters
+        # Run both search strategies in parallel
+        vector_results, bm25_results = await asyncio.gather(
+            self._vector_search(
+                query_embedding, top_k=top_k * 2, filters=filters
+            ),
+            self._bm25_search(
+                query, top_k=top_k * 2, filters=filters
+            )
         )
 
         merged = self._reciprocal_rank_fusion(vector_results, bm25_results, k=60)
