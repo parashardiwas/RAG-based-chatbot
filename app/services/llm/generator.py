@@ -42,20 +42,10 @@ class GenerationResult:
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT_TEMPLATE: str = """\
-You are a strict, factual data extraction assistant. Your ONLY job is to extract answers from the provided sources.
+Answer using ONLY the sources below. Respond in {language}. Cite as [N].
+If the answer isn't in the sources, reply exactly: "{fallback_message}"
 
-CRITICAL RULES - READ CAREFULLY:
-1. **Language**: Respond in {language}. Never switch languages.
-2. **Absolute Grounding**: Base your answer EXCLUSIVELY on the text in the sources below. You are FORBIDDEN from using outside knowledge. If you use outside knowledge, you will fail the task.
-3. **No Guessing**: If the exact answer cannot be found in the sources, you must NOT guess. You must reply exactly with:
-"{fallback_message}"
-4. **Citations**: When referencing a source, cite it inline as [Source N].
-5. **No Hallucinations**: Do not mention names, places, dates, or facts that are not explicitly stated in the text.
-
---- SOURCES ---
-{sources}
---- END SOURCES ---
-"""
+{sources}"""
 
 _FALLBACK_MESSAGES: dict[str, str] = {
     "en": "I don't have enough information to answer this question.",
@@ -143,6 +133,30 @@ class LLMGenerator:
             total_tokens=total_tokens,
             generation_time_ms=round(elapsed_ms, 2),
         )
+
+    async def generate_stream(
+        self,
+        prompt: str,
+        context: str,
+        language: str = "en",
+    ):
+        """Yields content chunks as they arrive from OpenAI."""
+        full_system_prompt = self._build_system_prompt(
+            context_chunks=[context] if isinstance(context, str) else context,
+            language=language,
+        )
+        client = self._get_client()
+        stream = await client.chat.completions.create(
+            model=self._settings.openai_model,
+            messages=[
+                {"role": "system", "content": full_system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            stream=True,
+        )
+        async for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
 
     # ------------------------------------------------------------------
     # Prompt construction

@@ -128,6 +128,20 @@ const API = {
         return resp.json();
     },
 
+    async compare(question, userAnswer) {
+        const resp = await fetch('/api/v1/compare', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: question, user_answer: userAnswer })
+        });
+        if (!resp.ok) {
+            const errText = await resp.text();
+            try { throw new Error(JSON.parse(errText).detail || resp.statusText); } 
+            catch(e) { throw new Error(errText || resp.statusText); }
+        }
+        return resp.json();
+    },
+
     async getHealth() {
         const resp = await fetch('/health');
         if (!resp.ok) throw new Error('Health check failed');
@@ -170,6 +184,92 @@ queryInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAsk(); }
 });
 
+// ── Compare Submission ─────────────────────────────────────
+const btnCompare = document.getElementById('btn-compare');
+if (btnCompare) {
+    btnCompare.addEventListener('click', handleCompare);
+}
+
+async function handleCompare() {
+    const qInput = document.getElementById('compare-q-input').value.trim();
+    const aInput = document.getElementById('compare-a-input').value.trim();
+    
+    if (!qInput || !aInput) {
+        showToast('Please enter both a question and an answer to compare.', 'error');
+        return;
+    }
+    
+    const loading = document.getElementById('compare-loading');
+    const resultArea = document.getElementById('compare-result-area');
+    const btn = document.getElementById('btn-compare');
+    
+    loading.classList.remove('hidden');
+    resultArea.classList.add('hidden');
+    btn.disabled = true;
+    
+    try {
+        const data = await API.compare(qInput, aInput);
+        
+        const verdictBox = document.getElementById('compare-verdict-box');
+        const decisionText = document.getElementById('compare-decision');
+        const iconContainer = document.getElementById('compare-icon');
+        const sourcesSection = document.getElementById('compare-sources-section');
+        const sourcesList = document.getElementById('compare-sources-list');
+        
+        verdictBox.className = 'compare-verdict'; // reset
+        
+        if (data.match === 'YES') {
+            verdictBox.classList.add('verdict-yes');
+            decisionText.textContent = 'YES';
+            iconContainer.innerHTML = `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+            
+            // Render sources if available
+            if (data.sources && data.sources.length > 0) {
+                sourcesList.innerHTML = '';
+                data.sources.forEach(src => {
+                    const item = document.createElement('div');
+                    item.className = 'source-item';
+                    const file = src.source_file || src.topic || 'Document';
+                    const score = (src.similarity * 100).toFixed(1);
+                    
+                    const div = document.createElement('div');
+                    div.innerText = src.content_preview || '';
+                    const escapedContent = div.innerHTML;
+                    
+                    item.innerHTML = `
+                        <div class="source-header">
+                            <span class="source-file">${file}</span>
+                            <span class="source-score">${score}% match</span>
+                        </div>
+                        <div class="source-preview">${escapedContent}</div>
+                    `;
+                    item.addEventListener('click', () => item.classList.toggle('expanded'));
+                    sourcesList.appendChild(item);
+                });
+                sourcesSection.classList.remove('hidden');
+            } else {
+                sourcesSection.classList.add('hidden');
+            }
+            
+        } else {
+            verdictBox.classList.add('verdict-no');
+            decisionText.textContent = 'NO';
+            iconContainer.innerHTML = `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+            sourcesSection.classList.add('hidden');
+        }
+        
+        loading.classList.add('hidden');
+        resultArea.classList.remove('hidden');
+        showToast('Comparison complete', 'success');
+        
+    } catch (err) {
+        loading.classList.add('hidden');
+        showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
 async function handleAsk() {
     const text = queryInput.value.trim();
 
@@ -185,13 +285,119 @@ async function handleAsk() {
     const topic = document.getElementById('topic-select').value;
 
     showLoading();
+    // Do not unhide responseArea yet
+    const answerEl = document.getElementById('answer-text');
+    answerEl.textContent = '';
+    
+    document.getElementById('sources-section').classList.add('hidden');
+    document.getElementById('resp-cached').classList.add('hidden');
+    document.getElementById('resp-latency').textContent = `- ms`;
+    document.getElementById('resp-model').textContent = `-`;
+    animateConfidenceBar('conf-answer', 0);
+    animateConfidenceBar('conf-retrieval', 0);
+    
+    btnAsk.disabled = true;
+
     try {
-        const data = await API.ask(text, lang, subject, topic);
-        showResponse(data);
-        showToast('Answer received!', 'success');
+        const resp = await fetch('/api/v1/ask/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, language: lang || 'en', subject, topic }),
+        });
+
+        if (!resp.ok) {
+            const errText = await resp.text();
+            try { throw new Error(JSON.parse(errText).detail || resp.statusText); } 
+            catch(e) { throw new Error(errText || resp.statusText); }
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let done = false;
+
+        while (!done) {
+            const { value, done: readerDone } = await reader.read();
+            done = readerDone;
+            if (value) {
+                const chunkStr = decoder.decode(value, { stream: true });
+                const lines = chunkStr.split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const dataStr = line.substring(6).trim();
+                        if (dataStr === '[DONE]') {
+                            break;
+                        }
+                        try {
+                            const data = JSON.parse(dataStr);
+                            if (data.metadata) {
+                                const m = data.metadata;
+                                if (m.latency_ms !== undefined) document.getElementById('resp-latency').textContent = `${m.latency_ms}ms`;
+                                if (m.model_used) document.getElementById('resp-model').textContent = m.model_used;
+                                if (m.cached) {
+                                    document.getElementById('resp-cached').classList.remove('hidden');
+                                } else {
+                                    document.getElementById('resp-cached').classList.add('hidden');
+                                }
+                                if (m.confidence !== undefined) animateConfidenceBar('conf-answer', Math.round(m.confidence * 100));
+                                if (m.retrieval_confidence !== undefined) animateConfidenceBar('conf-retrieval', Math.round(m.retrieval_confidence * 100));
+                                
+                                if (m.sources && m.sources.length > 0) {
+                                    window._pendingSources = m.sources; // Store temporarily
+                                }
+                            }
+                            if (data.chunk) {
+                                if (responseArea.classList.contains('hidden')) {
+                                    hideLoading();
+                                    responseArea.classList.remove('hidden');
+                                }
+                                answerEl.textContent += data.chunk;
+                            }
+                        } catch (e) {
+                            console.error('Error parsing SSE data:', e, dataStr);
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (responseArea.classList.contains('hidden')) {
+            hideLoading();
+            responseArea.classList.remove('hidden');
+        }
+        
+        // Stream completed, now render sources
+        if (window._pendingSources) {
+            const sourcesSection = document.getElementById('sources-section');
+            const sourcesList = document.getElementById('sources-list');
+            sourcesList.innerHTML = '';
+            sourcesSection.classList.remove('hidden');
+            window._pendingSources.forEach(src => {
+                const item = document.createElement('div');
+                item.className = 'source-item';
+                const file = src.source_file || src.topic || 'Document';
+                const score = (src.similarity * 100).toFixed(1);
+                
+                const div = document.createElement('div');
+                div.innerText = src.content_preview || '';
+                const escapedContent = div.innerHTML;
+                
+                item.innerHTML = `
+                    <div class="source-header">
+                        <span class="source-file">${file}</span>
+                        <span class="source-score">${score}% match</span>
+                    </div>
+                    <div class="source-preview">${escapedContent}</div>
+                `;
+                item.addEventListener('click', () => item.classList.toggle('expanded'));
+                sourcesList.appendChild(item);
+            });
+            window._pendingSources = null;
+        }
+        showToast('Answer generated!', 'success');
     } catch (err) {
-        hideLoading();
         showToast(err.message, 'error');
+    } finally {
+        btnAsk.disabled = false;
     }
 }
 

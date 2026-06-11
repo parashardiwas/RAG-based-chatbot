@@ -58,6 +58,17 @@ async def lifespan(app: FastAPI):
     )
     logger.info("✅ Orchestrator initialized")
 
+    # ── BM25 Cache Warmup ─────────────────────────────────────
+    logger.info("Warming BM25 index...")
+    try:
+        dummy_emb = [0.0] * 384
+        await orchestrator._retrieval_service.retrieve(
+            query="warmup", query_embedding=dummy_emb, top_k=1
+        )
+        logger.info("✅ BM25 index warmed")
+    except Exception as e:
+        logger.warning(f"BM25 warmup failed (non-fatal): {e}")
+
     # ── Ensure upload directory exists ────────────────────────
     os.makedirs(settings.upload_dir, exist_ok=True)
 

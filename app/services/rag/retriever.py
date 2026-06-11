@@ -227,16 +227,44 @@ class RetrievalService:
 
     async def retrieve_qa_pairs(
         self,
-        query_embedding: list[float],
+        query_embedding: list[float] | None = None,
         top_k: int = 1,
         subject_filter: str | None = None,
         topic_filter: str | None = None,
+        query_text: str | None = None,
     ) -> list[RetrievedChunk]:
         """Fast path: check if this exact/similar question was already answered."""
         filters = self._build_filter_clauses(subject_filter, topic_filter)
-        return await self._vector_search(
-            query_embedding, top_k=top_k, filters=filters, target="qa"
-        )
+        if query_embedding is not None:
+            return await self._vector_search(
+                query_embedding, top_k=top_k, filters=filters, target="qa"
+            )
+        elif query_text is not None:
+            async with self._session_factory() as session:
+                sql = """
+                SELECT qa.id AS chunk_id, qa.question || ' ' || qa.answer AS content,
+                       0.85 AS similarity_score, NULL AS source_file, t.name AS topic,
+                       s.name AS subject, 'qa_pair' AS source_type
+                FROM qa_pairs qa
+                LEFT JOIN topics t ON qa.topic_id = t.id
+                LEFT JOIN subjects s ON qa.subject_id = s.id
+                WHERE qa.is_deleted = false AND qa.question ILIKE :query_text
+                """ + filters["sql"] + " LIMIT :top_k"
+                params = {"query_text": query_text, "top_k": top_k, **filters["params"]}
+                query = sa_text(sql)
+                rows = await session.execute(query, params)
+                return [
+                    RetrievedChunk(
+                        chunk_id=row["chunk_id"],
+                        content=row["content"],
+                        similarity_score=float(row["similarity_score"]),
+                        source_file=row["source_file"],
+                        topic=row["topic"],
+                        subject=row["subject"],
+                        source_type=row["source_type"]
+                    ) for row in rows.mappings()
+                ]
+        return []
 
     # ------------------------------------------------------------------
     # Vector search (pgvector)

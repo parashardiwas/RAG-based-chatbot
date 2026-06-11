@@ -57,11 +57,15 @@ async def compare_answer(
             answer_b=eng_true_answer
         )
         
-        return {
+        response_data = {
             "match": "YES" if is_match else "NO",
             "detected_language": q_trans["original_language"],
             "true_answer_preview": eng_true_answer[:100] + "..."
         }
+        if is_match:
+            response_data["sources"] = result.sources
+            
+        return response_data
     except Exception as e:
         logger.error(f"Comparison error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal comparison error")
@@ -128,6 +132,28 @@ async def ask_question(
 
     finally:
         await queue_manager.release()
+
+
+@router.post("/ask/stream", summary="Ask a question and stream the response")
+async def ask_stream(
+    request: QueryRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Streaming endpoint for text generation. Yields SSE events."""
+    if not request.text or not request.text.strip():
+        raise HTTPException(status_code=400, detail="Question text is required")
+
+    orchestrator = await get_orchestrator()
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        orchestrator.process_text_query_stream(
+            text=request.text.strip(),
+            language=request.language,
+            subject_filter=request.subject,
+            topic_filter=request.topic,
+        ),
+        media_type="text/event-stream"
+    )
 
 
 @router.post(

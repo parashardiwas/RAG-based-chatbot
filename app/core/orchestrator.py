@@ -35,6 +35,8 @@ class OrchestratorResult:
     cost: RequestCost | None = None
 
 
+_background_tasks: set[asyncio.Task] = set()
+
 class Orchestrator:
     """
     Central orchestrator that routes requests through the processing pipeline.
@@ -62,6 +64,11 @@ class Orchestrator:
         self._translator_service = None
         self._redis = None
 
+    def _fire_and_forget(self, coro):
+        task = asyncio.create_task(coro)
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
     async def init(self, db_session_factory, redis_client=None):
         """Initialize all services. Call once at app startup."""
         try:
@@ -69,7 +76,6 @@ class Orchestrator:
             from app.services.rag.retriever import RetrievalService
             from app.services.llm.generator import LLMGenerator
             from app.services.llm.confidence import ConfidenceScorer
-            from app.services.llm.model_router import ModelRouter
             from app.services.language.translator import TranslatorService
 
             redis_url = self._settings.redis_url if hasattr(self._settings, 'redis_url') else 'redis://localhost:6379/0'
@@ -77,7 +83,6 @@ class Orchestrator:
             self._retrieval_service = RetrievalService(db_session_factory)
             self._llm_generator = LLMGenerator()
             self._confidence_scorer = ConfidenceScorer()
-            self._model_router = ModelRouter()
             self._translator_service = TranslatorService()
             self._redis = redis_client
             self._db_session_factory = db_session_factory
@@ -135,17 +140,43 @@ class Orchestrator:
                     detected_language=original_language,
                 )
 
-            # ── Step 3: Embed English Question ──────────────────
-            query_embedding = await self._embedding_service.embed_query(english_question)
-            cost.embedding_tokens = len(english_question.split()) * 2
+            # ── Step 3: Exact Match QA Cache Check ──────────────
+            exact_match = await self._check_exact_qa_cache(english_question)
+            if exact_match:
+                logger.info(f"[{request_id}] Exact QA Match found! Confidence: {exact_match['confidence']:.2f}")
+                
+                # Retranslate Answer
+                final_answer = await self._translator_service.translate_from_english(exact_match['answer'], original_language)
+                
+                latency = int((time.time() - start_time) * 1000)
+                cost.total_latency_ms = latency
+                return OrchestratorResult(
+                    request_id=request_id,
+                    answer=final_answer,
+                    language=original_language,
+                    confidence=exact_match['confidence'],
+                    retrieval_confidence=exact_match['retrieval_confidence'],
+                    sources=[],
+                    model_used="qa_pair_cache",
+                    latency_ms=latency,
+                    cached=True,
+                    input_text=text,
+                    detected_language=original_language,
+                    cost=cost
+                )
 
-            # ── Step 4: Check Q/A Pairs ─────────────────────────
-            qa_results = await self._retrieval_service.retrieve_qa_pairs(
-                query_embedding=query_embedding,
-                top_k=1,
-                subject_filter=subject_filter,
-                topic_filter=topic_filter
+            # ── Step 4: Parallel Embed & QA Lookup ──────────────
+            query_embedding, qa_results = await asyncio.gather(
+                self._embedding_service.embed_query(english_question),
+                self._retrieval_service.retrieve_qa_pairs(
+                    query_embedding=None, # Will use DB text match fallback since embedding isn't ready
+                    query_text=english_question,
+                    top_k=1,
+                    subject_filter=subject_filter,
+                    topic_filter=topic_filter
+                )
             )
+            cost.embedding_tokens = len(english_question.split()) * 2
 
             # High confidence threshold for returning a QA Pair
             qa_confidence_threshold = 0.85
@@ -175,7 +206,7 @@ class Orchestrator:
                         "sources": [],
                         "model_used": "qa_pair_cache"
                     }
-                    asyncio.create_task(self._cache_result(english_question, original_language, topic_filter, result_dict))
+                    self._fire_and_forget(self._cache_result(english_question, original_language, topic_filter, result_dict))
                     
                     latency = int((time.time() - start_time) * 1000)
                     cost.total_latency_ms = latency
@@ -230,7 +261,10 @@ class Orchestrator:
             model = self._settings.openai_model
             cost.model_used = model
 
-            valid_chunks = [c for c in chunks if c.similarity_score >= 0.25][:2]
+            if retrieval_confidence > 0.65:
+                valid_chunks = [c for c in chunks if c.similarity_score >= 0.25][:1]
+            else:
+                valid_chunks = [c for c in chunks if c.similarity_score >= 0.25][:2]
             
             if not valid_chunks:
                 latency = int((time.time() - start_time) * 1000)
@@ -324,7 +358,7 @@ class Orchestrator:
             cost.total_latency_ms = latency
 
             # Cache the result — only include valid_chunks (actually used)
-            asyncio.create_task(self._cache_result(english_question, original_language, topic_filter, {
+            self._fire_and_forget(self._cache_result(english_question, original_language, topic_filter, {
                 "answer": final_answer,
                 "confidence": answer_confidence,
                 "retrieval_confidence": retrieval_confidence,
@@ -337,7 +371,7 @@ class Orchestrator:
             # Track cost
             cost_tracker = await get_cost_tracker()
             cost = cost_tracker.calculate_cost(cost)
-            asyncio.create_task(cost_tracker.log_cost(cost))
+            self._fire_and_forget(cost_tracker.log_cost(cost))
 
             # Only report chunks that were actually used for generation
             sources = [
@@ -352,7 +386,7 @@ class Orchestrator:
             ]
 
             # Log query for audit trail
-            asyncio.create_task(self._log_query(
+            self._fire_and_forget(self._log_query(
                 request_id=request_id,
                 input_text=text,
                 detected_language=original_language,
@@ -384,6 +418,123 @@ class Orchestrator:
             latency = int((time.time() - start_time) * 1000)
             logger.error(f"[{request_id}] Pipeline error: {e}", exc_info=True)
             raise
+
+    async def process_text_query_stream(
+        self,
+        text: str,
+        language: str | None = None,
+        subject_filter: str | None = None,
+        topic_filter: str | None = None,
+    ):
+        """Streaming version of the pipeline. Yields SSE events."""
+        import json
+        start_time = time.time()
+        
+        # ── Step 1: Translate to English ────────────────────
+        trans_result = await self._translator_service.translate_to_english(text)
+        english_question = trans_result["english_text"]
+        
+        # ── Step 2: Cache Check (Exact Match) ───────────────
+        exact_match = await self._check_exact_qa_cache(english_question)
+        if exact_match:
+            latency = int((time.time() - start_time) * 1000)
+            yield f"data: {json.dumps({'metadata': {'latency_ms': latency, 'confidence': exact_match['confidence'], 'retrieval_confidence': exact_match['retrieval_confidence'], 'model_used': 'qa_pair_cache', 'sources': [], 'cached': True}})}\n\n"
+            yield f"data: {json.dumps({'chunk': exact_match['answer']})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+            
+        # ── Step 3: Embed & QA Lookup ───────────────────────
+        query_embedding, qa_results = await asyncio.gather(
+            self._embedding_service.embed_query(english_question),
+            self._retrieval_service.retrieve_qa_pairs(
+                query_embedding=None,
+                query_text=english_question,
+                top_k=1,
+                subject_filter=subject_filter,
+                topic_filter=topic_filter
+            )
+        )
+        
+        if qa_results and qa_results[0].similarity_score >= 0.85:
+            best_qa = qa_results[0]
+            async with self._db_session_factory() as session:
+                from app.db.models import QAPair
+                from sqlalchemy import select
+                stmt = select(QAPair).where(QAPair.id == best_qa.chunk_id)
+                res = await session.execute(stmt)
+                qa_row = res.scalar_one_or_none()
+            if qa_row:
+                latency = int((time.time() - start_time) * 1000)
+                yield f"data: {json.dumps({'metadata': {'latency_ms': latency, 'confidence': best_qa.similarity_score, 'retrieval_confidence': best_qa.similarity_score, 'model_used': 'qa_pair_cache', 'sources': [], 'cached': True}})}\n\n"
+                yield f"data: {json.dumps({'chunk': qa_row.answer})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+        # ── Step 4: Hybrid RAG Retrieval ────────────────────
+        chunks = await self._retrieval_service.retrieve(
+            query=english_question,
+            query_embedding=query_embedding,
+            top_k=10,
+            subject_filter=subject_filter,
+            topic_filter=topic_filter,
+        )
+
+        retrieval_confidence = self._retrieval_service.compute_confidence(chunks)
+        if retrieval_confidence < self._settings.retrieval_confidence_low:
+            fallback = self._get_fallback_answer(language or "en", text)
+            latency = int((time.time() - start_time) * 1000)
+            yield f"data: {json.dumps({'metadata': {'latency_ms': latency, 'retrieval_confidence': retrieval_confidence, 'confidence': 0.0, 'model_used': 'none (low confidence fallback)', 'sources': [], 'cached': False}})}\n\n"
+            yield f"data: {json.dumps({'chunk': fallback})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        if retrieval_confidence > 0.65:
+            valid_chunks = [c for c in chunks if c.similarity_score >= 0.25][:1]
+        else:
+            valid_chunks = [c for c in chunks if c.similarity_score >= 0.25][:2]
+            
+        if not valid_chunks:
+            fallback = self._get_fallback_answer(language or "en", text)
+            latency = int((time.time() - start_time) * 1000)
+            yield f"data: {json.dumps({'metadata': {'latency_ms': latency, 'retrieval_confidence': retrieval_confidence, 'confidence': 0.0, 'model_used': 'none (low context match)', 'sources': [], 'cached': False}})}\n\n"
+            yield f"data: {json.dumps({'chunk': fallback})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        context_block = "\n\n".join(c.content for c in valid_chunks)
+        
+        sources = [
+            {
+                "chunk_id": str(c.chunk_id),
+                "content_preview": c.content[:200],
+                "similarity": round(c.similarity_score, 3),
+                "source_file": c.source_file,
+                "topic": c.topic,
+            }
+            for c in valid_chunks
+        ]
+        latency = int((time.time() - start_time) * 1000)
+        metadata = {
+            "metadata": {
+                "latency_ms": latency,
+                "retrieval_confidence": retrieval_confidence,
+                "confidence": retrieval_confidence, # Estimate
+                "model_used": self._settings.openai_model,
+                "sources": sources,
+                "cached": False
+            }
+        }
+        yield f"data: {json.dumps(metadata)}\n\n"
+
+        # ── Step 5: Generation Stream ───────────────────────
+        async for chunk in self._llm_generator.generate_stream(
+            prompt=english_question,
+            context=context_block,
+            language="en"
+        ):
+            yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+            
+        yield "data: [DONE]\n\n"
 
     def _get_fallback_answer(self, language: str, query: str) -> str:
         """Generate a structured 'I don't know' response in the appropriate language."""
@@ -420,6 +571,16 @@ class Orchestrator:
             return "⚠️ Yeh answer low confidence level par based hai. Please sources verify karein."
         else:
             return "⚠️ This answer has low confidence. Please verify against the sources provided."
+
+    async def _check_exact_qa_cache(self, question: str) -> dict | None:
+        """O(1) exact match before spending 50ms on embedding."""
+        if not self._redis:
+            return None
+        import hashlib
+        import json
+        key = f"exact_qa:{hashlib.sha256(question.lower().strip().encode()).hexdigest()[:16]}"
+        cached = await self._redis.get(key)
+        return json.loads(cached) if cached else None
 
     async def _check_cache(self, text: str, language: str, topic: str | None) -> dict | None:
         """Check Redis cache for a previously computed answer."""
