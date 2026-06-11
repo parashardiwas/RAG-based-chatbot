@@ -15,6 +15,18 @@ const state = {
     selectedFileType: null, // 'audio', 'video', 'ingest'
 };
 
+// Configure marked with highlight.js
+if (typeof marked !== 'undefined' && typeof hljs !== 'undefined') {
+    marked.setOptions({
+        highlight: function(code, lang) {
+            if (lang && hljs.getLanguage(lang)) {
+                return hljs.highlight(code, { language: lang }).value;
+            }
+            return hljs.highlightAuto(code).value;
+        }
+    });
+}
+
 // ── Toast Notifications ────────────────────────────────────
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
@@ -287,7 +299,9 @@ async function handleAsk() {
     showLoading();
     // Do not unhide responseArea yet
     const answerEl = document.getElementById('answer-text');
-    answerEl.textContent = '';
+    answerEl.innerHTML = ''; // Changed from textContent for markdown
+    window._currentRawAnswer = ''; // Accumulate raw text
+    document.getElementById('answer-actions').classList.add('hidden'); // Hide actions initially
     
     document.getElementById('sources-section').classList.add('hidden');
     document.getElementById('resp-cached').classList.add('hidden');
@@ -350,7 +364,16 @@ async function handleAsk() {
                                     hideLoading();
                                     responseArea.classList.remove('hidden');
                                 }
-                                answerEl.textContent += data.chunk;
+                                window._currentRawAnswer += data.chunk;
+                                if (typeof marked !== 'undefined') {
+                                    answerEl.innerHTML = marked.parse(window._currentRawAnswer);
+                                } else {
+                                    answerEl.textContent += data.chunk;
+                                }
+                                
+                                // Auto-scroll
+                                const appMain = document.getElementById('app-main');
+                                appMain.scrollTop = appMain.scrollHeight;
                             }
                         } catch (e) {
                             console.error('Error parsing SSE data:', e, dataStr);
@@ -393,6 +416,8 @@ async function handleAsk() {
             });
             window._pendingSources = null;
         }
+        
+        document.getElementById('answer-actions').classList.remove('hidden');
         showToast('Answer generated!', 'success');
     } catch (err) {
         showToast(err.message, 'error');
@@ -400,6 +425,22 @@ async function handleAsk() {
         btnAsk.disabled = false;
     }
 }
+
+// Answer Action Buttons
+document.getElementById('btn-copy-answer')?.addEventListener('click', async () => {
+    if (window._currentRawAnswer) {
+        try {
+            await navigator.clipboard.writeText(window._currentRawAnswer);
+            showToast('Answer copied to clipboard!', 'success');
+        } catch (err) {
+            showToast('Failed to copy text', 'error');
+        }
+    }
+});
+
+document.getElementById('btn-regen-answer')?.addEventListener('click', () => {
+    handleAsk();
+});
 
 async function handleFileSubmit() {
     const lang = document.getElementById('lang-select').value;
