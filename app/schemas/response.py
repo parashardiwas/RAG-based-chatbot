@@ -53,6 +53,23 @@ class QueryResponse(BaseModel):
     )
 
 
+class TaskSubmitResponse(BaseModel):
+    """Returned when an async task is submitted."""
+    
+    task_id: str = Field(..., description="UUID of the background task.")
+    status: str = Field(..., description="Initial status, usually 'PENDING'.")
+    message: str = Field(..., description="Message indicating task was queued.")
+
+
+class TaskStatusResponse(BaseModel):
+    """Returned when polling for task status."""
+    
+    task_id: str = Field(..., description="UUID of the background task.")
+    status: str = Field(..., description="Current status: PENDING, PROCESSING, COMPLETED, or FAILED.")
+    result: QueryResponse | None = Field(None, description="The final QueryResponse if COMPLETED.")
+    error: str | None = Field(None, description="Error message if FAILED.")
+
+
 # ---------------------------------------------------------------------------
 # QA pair response
 # ---------------------------------------------------------------------------

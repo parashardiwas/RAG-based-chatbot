@@ -15,7 +15,7 @@ from app.core.orchestrator import get_orchestrator
 from app.core.queue_manager import get_queue_manager
 from app.db.database import get_db
 from app.schemas.request import QueryRequest, CompareRequest
-from app.schemas.response import ErrorResponse, QueryResponse, SourceInfo
+from app.schemas.response import ErrorResponse, QueryResponse, SourceInfo, TaskSubmitResponse, TaskStatusResponse
 from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,58 @@ async def ask_question(
 
     finally:
         await queue_manager.release()
+
+
+@router.post(
+    "/ask/async",
+    response_model=TaskSubmitResponse,
+    status_code=202,
+    summary="Ask a question asynchronously",
+    description="Submit a question and immediately receive a task ID. Useful for clients that drop connections on long requests."
+)
+async def ask_question_async(
+    request: QueryRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Submit a text-based question to the async RAG queue."""
+    if not request.text or not request.text.strip():
+        raise HTTPException(status_code=400, detail="Question text is required")
+
+    from app.core.task_manager import get_task_manager
+    task_manager = get_task_manager()
+    
+    task_id = await task_manager.submit_task(request)
+    
+    return TaskSubmitResponse(
+        task_id=task_id,
+        status="PENDING",
+        message="Task successfully queued for background processing."
+    )
+
+
+@router.get(
+    "/ask/status/{task_id}",
+    response_model=TaskStatusResponse,
+    summary="Check status of an async question",
+    description="Poll this endpoint to get the current status or final result of a background query."
+)
+async def get_task_status(
+    task_id: str,
+):
+    """Retrieve the background task status and result."""
+    from app.core.task_manager import get_task_manager
+    task_manager = get_task_manager()
+    
+    state = await task_manager.get_task_status(task_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Task not found or expired")
+        
+    return TaskStatusResponse(
+        task_id=state.task_id,
+        status=state.status,
+        result=state.result,
+        error=state.error
+    )
 
 
 @router.post(
