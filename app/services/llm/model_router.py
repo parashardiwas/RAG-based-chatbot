@@ -89,7 +89,7 @@ class ModelRouter:
         Returns
         -------
         str
-            Ollama model tag (e.g. ``"llama3.1:8b"``).
+            Model tag.
         """
         is_complex = self._is_complex_query(query)
 
