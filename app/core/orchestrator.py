@@ -64,22 +64,26 @@ class Orchestrator:
 
     async def init(self, db_session_factory, redis_client=None):
         """Initialize all services. Call once at app startup."""
-        from app.services.rag.embedder import EmbeddingService
-        from app.services.rag.retriever import RetrievalService
-        from app.services.llm.generator import LLMGenerator
-        from app.services.llm.confidence import ConfidenceScorer
-        from app.services.llm.model_router import ModelRouter
-        from app.services.language.translator import TranslatorService
+        try:
+            from app.services.rag.embedder import EmbeddingService
+            from app.services.rag.retriever import RetrievalService
+            from app.services.llm.generator import LLMGenerator
+            from app.services.llm.confidence import ConfidenceScorer
+            from app.services.llm.model_router import ModelRouter
+            from app.services.language.translator import TranslatorService
 
-        redis_url = self._settings.redis_url if hasattr(self._settings, 'redis_url') else 'redis://localhost:6379/0'
-        self._embedding_service = EmbeddingService(redis_url=redis_url)
-        self._retrieval_service = RetrievalService(db_session_factory)
-        self._llm_generator = LLMGenerator()
-        self._confidence_scorer = ConfidenceScorer()
-        self._model_router = ModelRouter()
-        self._translator_service = TranslatorService()
-        self._redis = redis_client
-        self._db_session_factory = db_session_factory
+            redis_url = self._settings.redis_url if hasattr(self._settings, 'redis_url') else 'redis://localhost:6379/0'
+            self._embedding_service = EmbeddingService(redis_url=redis_url)
+            self._retrieval_service = RetrievalService(db_session_factory)
+            self._llm_generator = LLMGenerator()
+            self._confidence_scorer = ConfidenceScorer()
+            self._model_router = ModelRouter()
+            self._translator_service = TranslatorService()
+            self._redis = redis_client
+            self._db_session_factory = db_session_factory
+        except Exception as e:
+            logger.error(f"Failed to initialize orchestrator services: {e}", exc_info=True)
+            raise
 
     async def process_text_query(
         self,
