@@ -215,13 +215,15 @@ class RetrievalService:
             # Run in a separate thread since inference is CPU blocking
             scores = await asyncio.to_thread(self.__class__._cross_encoder.predict, pairs)
             
+            import math
             # Apply the new scores
             for i, chunk in enumerate(candidates):
                 # We overwrite the similarity score for the final ranking.
-                # Cross-encoder scores are typically logits, we don't strictly need them in [0,1]
-                # for sorting, but we might want to normalize them if confidence relies on it.
-                # For now, just store the raw score.
-                chunk.similarity_score = float(scores[i])
+                # Cross-encoder scores are logits. We apply a sigmoid function
+                # to convert them to a [0, 1] probability scale which works properly
+                # with the downstream confidence calculation.
+                logit = float(scores[i])
+                chunk.similarity_score = 1.0 / (1.0 + math.exp(-logit))
             
             # Re-sort candidates by the new cross-encoder score descending
             candidates.sort(key=lambda c: c.similarity_score, reverse=True)

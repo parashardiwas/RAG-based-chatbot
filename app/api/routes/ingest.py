@@ -150,7 +150,7 @@ async def _process_file_background(
                 await session.execute(
                     update(Document)
                     .where(Document.id == uuid_mod.UUID(document_id))
-                    .values(status="failed", metadata={"error": str(e)})
+                    .values(status="failed", metadata_={"error": str(e)})
                 )
                 await session.commit()
         except Exception:
