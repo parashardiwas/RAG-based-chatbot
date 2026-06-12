@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.db.database import get_db
+from app.api.auth import verify_api_key
 from app.db.models import AuditLog, QAPair, QAVersion
 from app.schemas.request import BulkQAUpload, QAPairCreate, QAPairUpdate
 from app.schemas.response import QAPairResponse
@@ -144,8 +145,9 @@ async def get_qa_versions(
     description="Create a new Q/A pair. Embeddings are auto-generated.",
 )
 async def create_qa_pair(
-    data: QAPairCreate,
+    request: QAPairCreate,
     db: AsyncSession = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ):
     """Create a new Q/A pair with auto-generated embeddings."""
     from app.services.rag.embedder import EmbeddingService
@@ -153,15 +155,15 @@ async def create_qa_pair(
     embedding_service = EmbeddingService()
 
     # Generate embeddings for question, answer, and combined
-    q_emb = await embedding_service.embed_text(data.question)
-    a_emb = await embedding_service.embed_text(data.answer)
-    combined_emb = await embedding_service.embed_text(f"{data.question} {data.answer}")
+    q_emb = await embedding_service.embed_text(request.question)
+    a_emb = await embedding_service.embed_text(request.answer)
+    combined_emb = await embedding_service.embed_text(f"{request.question} {request.answer}")
 
     pair = QAPair(
         id=uuid.uuid4(),
-        question=data.question,
-        answer=data.answer,
-        language=data.language or "en",
+        question=request.question,
+        answer=request.answer,
+        language=request.language or "en",
         source_type="manual",
         question_embedding=q_emb,
         answer_embedding=a_emb,
@@ -176,7 +178,7 @@ async def create_qa_pair(
         entity_type="qa_pair",
         entity_id=pair.id,
         action="create",
-        new_data={"question": data.question, "answer": data.answer},
+        new_data={"question": request.question, "answer": request.answer},
     )
     db.add(audit)
     await db.commit()
@@ -188,8 +190,8 @@ async def create_qa_pair(
         id=str(pair.id),
         question=pair.question,
         answer=pair.answer,
-        subject=data.subject,
-        topic=data.topic,
+        subject=request.subject,
+        topic=request.topic,
         language=pair.language or "en",
         version=1,
         created_at=pair.created_at or datetime.now(timezone.utc),
@@ -205,8 +207,9 @@ async def create_qa_pair(
 )
 async def update_qa_pair(
     qa_id: str,
-    data: QAPairUpdate,
+    request: QAPairUpdate,
     db: AsyncSession = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ):
     """Update a Q/A pair with version tracking."""
     result = await db.execute(
@@ -227,17 +230,17 @@ async def update_qa_pair(
         question=pair.question,
         answer=pair.answer,
         version=pair.version or 1,
-        edit_reason=data.edit_reason,
+        edit_reason=request.edit_reason,
     )
     db.add(version)
 
     # Update the pair
     old_data = {"question": pair.question, "answer": pair.answer}
 
-    if data.question is not None:
-        pair.question = data.question
-    if data.answer is not None:
-        pair.answer = data.answer
+    if request.question is not None:
+        pair.question = request.question
+    if request.answer is not None:
+        pair.answer = request.answer
 
     pair.version = (pair.version or 1) + 1
     pair.updated_at = datetime.now(timezone.utc)
@@ -287,8 +290,9 @@ async def update_qa_pair(
 )
 async def delete_qa_pair(
     qa_id: str,
-    hard: bool = Query(False, description="Permanently delete instead of soft-delete"),
+    hard_delete: bool = Query(False, description="Permanently delete instead of soft delete"),
     db: AsyncSession = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ):
     """Soft-delete (or hard-delete) a Q/A pair."""
     result = await db.execute(
@@ -299,7 +303,7 @@ async def delete_qa_pair(
     if not pair:
         raise HTTPException(status_code=404, detail="Q/A pair not found")
 
-    if hard:
+    if hard_delete:
         # Permanent deletion
         await db.delete(pair)
         action = "hard_delete"
@@ -320,8 +324,8 @@ async def delete_qa_pair(
     db.add(audit)
     await db.commit()
 
-    logger.info(f"{'Hard' if hard else 'Soft'}-deleted Q/A pair {qa_id}")
-    return {"status": "deleted", "qa_id": qa_id, "type": "hard" if hard else "soft"}
+    logger.info(f"{'Hard' if hard_delete else 'Soft'}-deleted Q/A pair {qa_id}")
+    return {"status": "deleted", "qa_id": qa_id, "type": "hard" if hard_delete else "soft"}
 
 
 @router.post(
@@ -332,6 +336,7 @@ async def delete_qa_pair(
 async def restore_qa_pair(
     qa_id: str,
     db: AsyncSession = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ):
     """Restore a soft-deleted Q/A pair."""
     result = await db.execute(
@@ -377,8 +382,9 @@ async def restore_qa_pair(
     description="Upload multiple Q/A pairs at once. All pairs are embedded and stored.",
 )
 async def bulk_upload_qa(
-    data: BulkQAUpload,
+    request: BulkQAUpload,
     db: AsyncSession = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ):
     """Bulk create Q/A pairs with auto-generated embeddings."""
     from app.services.rag.embedder import EmbeddingService

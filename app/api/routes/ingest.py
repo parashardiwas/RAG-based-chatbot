@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.database import get_db
+from app.api.auth import verify_api_key
 from app.schemas.request import IngestFileRequest
 from app.schemas.response import IngestResponse
 
@@ -171,17 +172,16 @@ async def ingest_file(
     topic: str | None = Form(None, description="Topic within subject"),
     language: str | None = Form(None, description="Document language"),
     db: AsyncSession = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ):
     """Upload and process a file for RAG ingestion."""
     settings = get_settings()
 
-    # Validate file size
-    content = await file.read()
-    size_mb = len(content) / (1024 * 1024)
-    if size_mb > settings.max_upload_size_mb:
+    # Validate file size from headers first if available
+    if file.size and file.size > settings.max_upload_size_mb * 1024 * 1024:
         raise HTTPException(
             status_code=413,
-            detail=f"File too large: {size_mb:.1f}MB (max {settings.max_upload_size_mb}MB)",
+            detail=f"File too large (max {settings.max_upload_size_mb}MB)",
         )
 
     # Save file (use absolute path so it works regardless of server CWD)
@@ -196,20 +196,31 @@ async def ingest_file(
     if not str(resolved).startswith(str(allowed)):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    # Use async file I/O to avoid blocking event loop
+    # Use async file I/O and stream the file to avoid unbounded memory usage
+    import hashlib
+    file_hash = hashlib.sha256()
+    size_read = 0
+    
     async with aiofiles.open(file_path, "wb") as f:
-        await f.write(content)
+        while chunk := await file.read(8192):
+            size_read += len(chunk)
+            if size_read > settings.max_upload_size_mb * 1024 * 1024:
+                os.unlink(file_path)
+                raise HTTPException(status_code=413, detail=f"File too large (max {settings.max_upload_size_mb}MB)")
+            file_hash.update(chunk)
+            await f.write(chunk)
+
+    file_hash_value = file_hash.hexdigest()
 
     # Check for duplicate document by file hash
-    import hashlib
     from app.db.models import Document
     from sqlalchemy import select
 
-    file_hash_value = hashlib.sha256(content).hexdigest()
     existing_doc = await db.execute(
         select(Document).where(Document.file_hash == file_hash_value)
     )
     if existing_doc.scalar_one_or_none():
+        os.unlink(file_path) # cleanup
         raise HTTPException(
             status_code=409,
             detail="This document has already been ingested. Delete it first to re-ingest."
@@ -372,6 +383,7 @@ async def view_document(
 async def delete_document(
     document_id: str,
     db: AsyncSession = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ):
     """Delete a document and all its chunks from the database."""
     from app.db.models import Document

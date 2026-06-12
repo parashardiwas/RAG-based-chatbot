@@ -102,3 +102,36 @@ class AudioProcessor:
             "segments": [],
             "latency_ms": 0,
         }
+
+    async def extract_audio_from_video(self, video_path: str) -> str | None:
+        """Extract audio from video file to a temporary wav file."""
+        import tempfile
+        import asyncio
+        import os
+        
+        fd, audio_path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-y", "-i", video_path, 
+                "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                audio_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await process.communicate()
+            
+            if process.returncode != 0:
+                logger.error(f"ffmpeg extraction failed: {stderr.decode()}")
+                os.unlink(audio_path)
+                return None
+                
+            return audio_path
+        except Exception as e:
+            logger.error(f"Failed to extract audio from video: {e}")
+            try:
+                os.unlink(audio_path)
+            except OSError:
+                pass
+            return None

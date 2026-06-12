@@ -67,7 +67,6 @@ Text: "{text}"
             response = await client.chat.completions.create(
                 model=self._model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
             )
             en_text = response.choices[0].message.content.strip()
             return {"english_text": en_text, "original_language": detected_lang}
@@ -95,7 +94,6 @@ Text: "{text}"
             response = await client.chat.completions.create(
                 model=self._model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
@@ -127,11 +125,14 @@ Are the core facts in Answer A and Answer B equivalent?"""
             response = await client.chat.completions.create(
                 model=self._model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_completion_tokens=5,  # We only need YES or NO — cap tokens for speed
+                max_completion_tokens=2000,
             )
-            result = response.choices[0].message.content.strip().upper()
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("Model returned empty content during comparison")
+                
+            result = content.strip().upper()
             return result.startswith("YES")
         except Exception as e:
             logger.error(f"Comparison failed: {e}")
-            return False
+            raise

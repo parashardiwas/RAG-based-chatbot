@@ -22,8 +22,9 @@ torch>=2.0.0,<3.0.0
 # AI/ML - RAG
 numpy>=2.0.0
 
-# Media Processing
-# faster-whisper removed — using AssemblyAI for ASR
+# Media Processing & Integrations
+openai>=1.14.0
+assemblyai>=0.25.0
 PyMuPDF>=1.25.0
 python-docx>=1.1.0
 pandas>=2.2.0

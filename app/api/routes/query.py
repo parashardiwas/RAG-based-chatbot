@@ -109,12 +109,16 @@ async def ask_question(
     acquired = await queue_manager.acquire()
     if not acquired:
         queued = queue_manager.get_queue_position()
-        return {
-            "status": "queued",
-            "queue_position": queued.position,
-            "estimated_wait_seconds": queued.position * 3,
-            "request_id": queued.request_id,
-        }
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "queued",
+                "queue_position": queued.position,
+                "estimated_wait_seconds": queued.position * 3,
+                "request_id": queued.request_id,
+            }
+        )
 
     try:
         if not request.text or not request.text.strip():

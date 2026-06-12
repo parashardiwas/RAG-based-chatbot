@@ -66,8 +66,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return self._redis
 
     async def dispatch(self, request: Request, call_next):
-        # Skip rate limiting for health checks
-        if request.url.path in ("/health", "/metrics", "/docs", "/openapi.json"):
+        # Skip rate limiting for static assets and health checks
+        if request.url.path in ("/", "/health", "/metrics", "/docs", "/openapi.json") or request.url.path.startswith("/static"):
             return await call_next(request)
 
         redis = await self._get_redis()
@@ -76,17 +76,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             key = f"rate_limit:{client_ip}"
 
             try:
-                current = await redis.get(key)
-                if current and int(current) >= self.requests_per_minute:
+                # Use a pipeline to safely increment and set expiry only on first request
+                pipe = redis.pipeline()
+                pipe.incr(key)
+                pipe.ttl(key)
+                count, ttl = await pipe.execute()
+                
+                if count == 1 or ttl == -1:
+                    await redis.expire(key, 60)
+                
+                if count > self.requests_per_minute:
                     from fastapi.responses import JSONResponse
                     return JSONResponse(
                         status_code=429,
                         content={"detail": f"Rate limit exceeded. Max {self.requests_per_minute} requests/minute."}
                     )
-                pipe = redis.pipeline()
-                pipe.incr(key)
-                pipe.expire(key, 60)
-                await pipe.execute()
             except HTTPException:
                 raise
             except Exception as e:

@@ -14,10 +14,8 @@ async def stream_dictation(websocket: WebSocket, token: str = Query(default=""))
     settings = get_settings()
 
     # Validate token before accepting the WebSocket upgrade
-    expected_token = hashlib.sha256(
-        (settings.openai_api_key or "ragbot-default").encode()
-    ).hexdigest()[:16]
-    if token != expected_token:
+    # Use the server's API key if configured
+    if settings.api_key and token != settings.api_key:
         await websocket.close(code=4001)
         return
 

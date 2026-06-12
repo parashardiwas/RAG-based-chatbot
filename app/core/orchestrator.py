@@ -310,32 +310,34 @@ class Orchestrator:
                 answer_confidence = min(retrieval_confidence * 1.1, 1.0)
                 meets_threshold = answer_confidence >= self._settings.answer_match_threshold
 
-            # ── Step 8: Store Q/A Pair ──────────────────────────
-            try:
-                # Store the successful English Q/A pair
-                async with self._db_session_factory() as session:
-                    from app.db.models import QAPair
-                    from sqlalchemy import select
-                    
-                    # Prevent exact duplicate insertions
-                    stmt = select(QAPair).where(QAPair.question == english_question)
-                    res = await session.execute(stmt)
-                    existing_qa = res.scalar_one_or_none()
-                    
-                    if not existing_qa:
-                        new_qa = QAPair(
-                            question=english_question,
-                            answer=english_answer,
-                            question_embedding=query_embedding,
-                            answer_embedding=answer_embedding,
-                            combined_embedding=query_embedding, # simplification
-                            language="en",
-                            source_type="rag_generated"
-                        )
-                        session.add(new_qa)
-                        await session.commit()
-            except Exception as e:
-                logger.warning(f"[{request_id}] Failed to save Q/A Pair: {e}")
+            # ── Step 8: Cache and Store Q/A Pair (Async) ────────
+            # Gate the insert on meets_threshold to prevent self-poisoning
+            if meets_threshold:
+                try:
+                    # Store the successful English Q/A pair
+                    async with self._db_session_factory() as session:
+                        from app.db.models import QAPair
+                        from sqlalchemy import select
+                        
+                        # Prevent exact duplicate insertions
+                        stmt = select(QAPair).where(QAPair.question == english_question)
+                        res = await session.execute(stmt)
+                        existing_qa = res.scalar_one_or_none()
+                        
+                        if not existing_qa:
+                            new_qa = QAPair(
+                                question=english_question,
+                                answer=english_answer,
+                                question_embedding=query_embedding,
+                                answer_embedding=answer_embedding,
+                                combined_embedding=query_embedding, # simplification
+                                language="en",
+                                source_type="rag_generated"
+                            )
+                            session.add(new_qa)
+                            await session.commit()
+                except Exception as e:
+                    logger.warning(f"[{request_id}] Failed to save Q/A Pair: {e}")
 
             # ── Step 9: Final Confidence Gate & Retranslate ───
             final_answer = english_answer
@@ -349,21 +351,21 @@ class Orchestrator:
 
             final_answer = await self._translator_service.translate_from_english(final_answer, original_language)
 
+            # Cache the result — only include valid_chunks (actually used)
+            if meets_threshold:
+                self._fire_and_forget(self._cache_result(english_question, original_language, topic_filter, {
+                    "answer": final_answer,
+                    "confidence": answer_confidence,
+                    "retrieval_confidence": retrieval_confidence,
+                    "sources": [{"chunk_id": str(c.chunk_id), "content_preview": c.content[:200],
+                                "similarity": c.similarity_score, "source_file": c.source_file,
+                                "topic": c.topic} for c in valid_chunks],
+                    "model_used": generation_result.model_used,
+                }))
 
             # ── Step 10: Cache + Log ──────────────────────────
             latency = int((time.time() - start_time) * 1000)
             cost.total_latency_ms = latency
-
-            # Cache the result — only include valid_chunks (actually used)
-            self._fire_and_forget(self._cache_result(english_question, original_language, topic_filter, {
-                "answer": final_answer,
-                "confidence": answer_confidence,
-                "retrieval_confidence": retrieval_confidence,
-                "sources": [{"chunk_id": str(c.chunk_id), "content_preview": c.content[:200],
-                            "similarity": c.similarity_score, "source_file": c.source_file,
-                            "topic": c.topic} for c in valid_chunks],
-                "model_used": generation_result.model_used,
-            }))
 
             # Track cost
             cost_tracker = await get_cost_tracker()
@@ -633,6 +635,10 @@ class Orchestrator:
             import json
             cache_key = f"answer:{hashlib.sha256(f'{text}:{language}:{topic}'.encode()).hexdigest()[:32]}"
             await self._redis.setex(cache_key, 3600, json.dumps(result, default=str))
+            
+            # Also write to exact_qa for O(1) exact match lookup
+            exact_key = f"exact_qa:{hashlib.sha256(text.lower().strip().encode()).hexdigest()[:16]}"
+            await self._redis.setex(exact_key, 3600, json.dumps(result, default=str))
         except Exception as e:
             logger.debug(f"Cache write failed: {e}")
 

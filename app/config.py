@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     app_name: str = "RAG Answering Service"
     app_version: str = "1.0.0"
     debug: bool = False
+    api_key: str = ""
 
     @field_validator("openai_api_key")
     @classmethod
