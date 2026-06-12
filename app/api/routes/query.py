@@ -78,7 +78,16 @@ async def compare_answer(
             "true_answer_preview": eng_true_answer[:100] + "..."
         }
         if is_match:
+            # Correct: show where the answer is grounded
             response_data["sources"] = rag_result.sources
+        else:
+            # Incorrect: return the full correct answer in the user's language
+            correct_answer = eng_true_answer
+            if not is_english:
+                correct_answer = await translator.translate_from_english(
+                    eng_true_answer, detected_lang
+                )
+            response_data["correct_answer"] = correct_answer
             
         return response_data
     except Exception as e:

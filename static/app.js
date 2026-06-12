@@ -227,10 +227,13 @@ async function handleCompare() {
         const iconContainer = document.getElementById('compare-icon');
         const sourcesSection = document.getElementById('compare-sources-section');
         const sourcesList = document.getElementById('compare-sources-list');
+        const correctSection = document.getElementById('compare-correct-section');
+        const correctText = document.getElementById('compare-correct-text');
         
         verdictBox.className = 'compare-verdict'; // reset
         
         if (data.match === 'YES') {
+            correctSection.classList.add('hidden');
             verdictBox.classList.add('verdict-yes');
             decisionText.textContent = 'YES';
             iconContainer.innerHTML = `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
@@ -268,6 +271,18 @@ async function handleCompare() {
             decisionText.textContent = 'NO';
             iconContainer.innerHTML = `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
             sourcesSection.classList.add('hidden');
+
+            // Show the correct answer from the knowledge base
+            if (data.correct_answer) {
+                if (typeof marked !== 'undefined') {
+                    correctText.innerHTML = marked.parse(data.correct_answer);
+                } else {
+                    correctText.textContent = data.correct_answer;
+                }
+                correctSection.classList.remove('hidden');
+            } else {
+                correctSection.classList.add('hidden');
+            }
         }
         
         loading.classList.add('hidden');
