@@ -831,15 +831,12 @@ document.getElementById('documents-list')?.addEventListener('click', async (e) =
     if (!btn) return;
     const id = btn.dataset.docId;
     const filename = btn.dataset.docName;
-    if (confirm(`Are you sure you want to completely delete "${filename}"?\nThis will remove the file and all its data chunks from the system.`)) {
-        try {
-            await API.deleteDocument(id);
-            showToast(`Document deleted`, 'success');
-            loadDocuments();
-        } catch (err) {
-            showToast('Delete failed: ' + err.message, 'error');
-        }
-    }
+    
+    state.deleteTargetId = id;
+    state.deleteTargetType = 'document';
+    document.getElementById('delete-modal-title').textContent = 'Delete Document';
+    document.getElementById('delete-modal-text').textContent = `Are you sure you want to completely delete "${filename}"?\nThis will remove the file and all its data chunks from the system.`;
+    document.getElementById('delete-modal').classList.remove('hidden');
 });
 
 // ── Q/A Pairs Management ───────────────────────────────────
@@ -919,6 +916,9 @@ window.saveQAEdit = async function(id, btn) {
 
 window.confirmDeleteQA = function(id) {
     state.deleteTargetId = id;
+    state.deleteTargetType = 'qa';
+    document.getElementById('delete-modal-title').textContent = 'Delete Q/A Pair';
+    document.getElementById('delete-modal-text').textContent = 'Are you sure you want to delete this Q/A pair? This action can be undone via restore.';
     document.getElementById('delete-modal').classList.remove('hidden');
 };
 
@@ -926,21 +926,31 @@ window.confirmDeleteQA = function(id) {
 document.getElementById('modal-cancel').addEventListener('click', () => {
     document.getElementById('delete-modal').classList.add('hidden');
     state.deleteTargetId = null;
+    state.deleteTargetType = null;
 });
 document.getElementById('modal-confirm').addEventListener('click', async () => {
     if (!state.deleteTargetId) return;
     try {
-        await API.deleteQA(state.deleteTargetId);
-        showToast('Q/A pair deleted', 'success');
-        loadQAPairs();
+        if (state.deleteTargetType === 'document') {
+            await API.deleteDocument(state.deleteTargetId);
+            showToast('Document deleted', 'success');
+            loadDocuments();
+        } else {
+            await API.deleteQA(state.deleteTargetId);
+            showToast('Q/A pair deleted', 'success');
+            loadQAPairs();
+        }
     } catch (err) {
         showToast('Delete failed: ' + err.message, 'error');
     }
     document.getElementById('delete-modal').classList.add('hidden');
     state.deleteTargetId = null;
+    state.deleteTargetType = null;
 });
 document.querySelector('.modal-backdrop')?.addEventListener('click', () => {
     document.getElementById('delete-modal').classList.add('hidden');
+    state.deleteTargetId = null;
+    state.deleteTargetType = null;
 });
 
 // Add Q/A pair
