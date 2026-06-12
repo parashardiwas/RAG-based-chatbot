@@ -17,14 +17,14 @@ redis[hiredis]>=6.0.0
 
 # AI/ML - Embeddings
 sentence-transformers>=4.0.0
-torch>=2.9.0
+torch>=2.0.0,<3.0.0
 
 # AI/ML - RAG
 rank-bm25>=0.2.2
 numpy>=2.0.0
 
 # Media Processing
-faster-whisper>=1.1.0
+# faster-whisper removed — using AssemblyAI for ASR
 PyMuPDF>=1.25.0
 python-docx>=1.1.0
 pandas>=2.2.0
@@ -38,5 +38,4 @@ langdetect>=1.0.9
 # Utilities
 python-dotenv>=1.0.0
 aiofiles>=24.0.0
-deepgram-sdk>=3.0.0
-websockets>=12.0
+# deepgram-sdk and websockets removed — unused

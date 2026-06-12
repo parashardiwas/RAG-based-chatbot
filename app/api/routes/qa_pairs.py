@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.db.database import get_db
 from app.db.models import AuditLog, QAPair, QAVersion
@@ -17,6 +18,14 @@ from app.schemas.response import QAPairResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/qa", tags=["Q/A Pairs"])
+
+
+def _parse_uuid(value: str) -> uuid.UUID:
+    """Parse a UUID string, raising 422 for invalid format."""
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Invalid UUID format: {value}")
 
 
 @router.get(
@@ -35,7 +44,7 @@ async def list_qa_pairs(
     db: AsyncSession = Depends(get_db),
 ):
     """List all Q/A pairs with pagination and filtering."""
-    query = select(QAPair)
+    query = select(QAPair).options(joinedload(QAPair.subject), joinedload(QAPair.topic))
 
     if not include_deleted:
         query = query.where(QAPair.is_deleted == False)
@@ -77,7 +86,7 @@ async def get_qa_pair(
 ):
     """Get a single Q/A pair with its version history."""
     result = await db.execute(
-        select(QAPair).where(QAPair.id == uuid.UUID(qa_id))
+        select(QAPair).where(QAPair.id == _parse_uuid(qa_id))
     )
     pair = result.scalar_one_or_none()
 
@@ -109,7 +118,7 @@ async def get_qa_versions(
     """Get version history for a Q/A pair."""
     result = await db.execute(
         select(QAVersion)
-        .where(QAVersion.qa_pair_id == uuid.UUID(qa_id))
+        .where(QAVersion.qa_pair_id == _parse_uuid(qa_id))
         .order_by(QAVersion.version.desc())
     )
     versions = result.scalars().all()
@@ -201,7 +210,7 @@ async def update_qa_pair(
 ):
     """Update a Q/A pair with version tracking."""
     result = await db.execute(
-        select(QAPair).where(QAPair.id == uuid.UUID(qa_id))
+        select(QAPair).where(QAPair.id == _parse_uuid(qa_id))
     )
     pair = result.scalar_one_or_none()
 
@@ -283,7 +292,7 @@ async def delete_qa_pair(
 ):
     """Soft-delete (or hard-delete) a Q/A pair."""
     result = await db.execute(
-        select(QAPair).where(QAPair.id == uuid.UUID(qa_id))
+        select(QAPair).where(QAPair.id == _parse_uuid(qa_id))
     )
     pair = result.scalar_one_or_none()
 
@@ -304,7 +313,7 @@ async def delete_qa_pair(
     audit = AuditLog(
         id=uuid.uuid4(),
         entity_type="qa_pair",
-        entity_id=uuid.UUID(qa_id),
+        entity_id=_parse_uuid(qa_id),
         action=action,
         old_data={"question": pair.question, "answer": pair.answer},
     )
@@ -326,7 +335,7 @@ async def restore_qa_pair(
 ):
     """Restore a soft-deleted Q/A pair."""
     result = await db.execute(
-        select(QAPair).where(QAPair.id == uuid.UUID(qa_id))
+        select(QAPair).where(QAPair.id == _parse_uuid(qa_id))
     )
     pair = result.scalar_one_or_none()
 

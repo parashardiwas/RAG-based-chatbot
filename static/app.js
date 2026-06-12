@@ -757,8 +757,11 @@ async function toggleRecording() {
                 showToast('Connection to transcription server failed', 'error');
             };
 
-            state.mediaRecorder.onstop = () => {
-                stream.getTracks().forEach(track => track.stop());
+            audioSocket.onclose = () => {
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
+                state.isRecording = false;
             };
 
         } catch (err) {

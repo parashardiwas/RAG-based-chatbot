@@ -9,6 +9,7 @@ Default model: ``gpt-5-nano``.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 
@@ -16,6 +17,21 @@ from openai import AsyncOpenAI
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_chunk(chunk: str) -> str:
+    """Remove common prompt injection patterns from retrieved content."""
+    injection_patterns = [
+        r"ignore (all |previous |above |prior )?(instructions?|prompts?|rules?|context)",
+        r"disregard (all |previous |above )?",
+        r"you are now",
+        r"new (instructions?|system prompt|role)",
+        r"(forget|override) (everything|all|your)",
+    ]
+    sanitized = chunk
+    for pattern in injection_patterns:
+        sanitized = re.sub(pattern, "[FILTERED]", sanitized, flags=re.IGNORECASE)
+    return sanitized
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -93,6 +109,11 @@ class LLMGenerator:
     # Public API
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        """Rough estimate: 1 token ≈ 4 chars for English text."""
+        return len(text) // 4
+
     async def generate(
         self,
         prompt: str,
@@ -105,6 +126,19 @@ class LLMGenerator:
             context_chunks=[context] if isinstance(context, str) else context,
             language=language,
         )
+
+        # RAG-007: Token count validation
+        total_tokens = self._estimate_tokens(full_system_prompt + prompt)
+        if total_tokens > 3500:
+            logger.warning(
+                f"Prompt estimated at {total_tokens} tokens — truncating context."
+            )
+            # Truncate context to fit
+            max_context_chars = (3500 - self._estimate_tokens(prompt) - 500) * 4
+            context = context[:max_context_chars]
+            full_system_prompt = self._build_system_prompt(
+                context_chunks=[context], language=language
+            )
 
         model = self._settings.openai_model
         
@@ -172,7 +206,7 @@ class LLMGenerator:
         Each context chunk is labelled as ``[Source N]`` for citation.
         """
         numbered_sources = "\n".join(
-            f"[Source {i}] {chunk}" for i, chunk in enumerate(context_chunks, 1)
+            f"[Source {i}] {_sanitize_chunk(chunk)}" for i, chunk in enumerate(context_chunks, 1)
         )
         fallback_message = _FALLBACK_MESSAGES.get(
             language, _FALLBACK_MESSAGES["en"]

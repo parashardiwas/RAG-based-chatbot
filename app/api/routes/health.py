@@ -3,6 +3,7 @@ Health check and metrics endpoints.
 """
 
 import logging
+import time
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
@@ -16,6 +17,8 @@ from app.schemas.response import HealthResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Health"])
+
+_llm_health_cache: dict = {"status": "unknown", "expires": 0.0}
 
 
 @router.get(
@@ -51,15 +54,20 @@ async def health_check(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         health["redis"] = f"unhealthy: {e}"
 
-    # Check LLM (OpenAI)
-    try:
-        import openai
-        client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
-        # Fast ping to models endpoint
-        await client.models.list()
-        health["llm"] = f"healthy ({settings.openai_model})"
-    except Exception as e:
-        health["llm"] = f"unavailable: {e}"
+    # LLM health — cached for 60 seconds
+    now = time.time()
+    if now < _llm_health_cache["expires"]:
+        health["llm"] = _llm_health_cache["status"]
+    else:
+        try:
+            import openai
+            client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+            await client.models.list()
+            llm_status = f"healthy ({settings.openai_model})"
+        except Exception as e:
+            llm_status = f"unavailable: {e}"
+        _llm_health_cache.update({"status": llm_status, "expires": now + 60.0})
+        health["llm"] = llm_status
 
     # Check GPU (Apple Silicon MPS)
     try:

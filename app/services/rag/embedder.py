@@ -56,7 +56,14 @@ class EmbeddingService:
     def __init__(self, redis_url: str = "redis://localhost:6379/0") -> None:
         # Guard against re-initialisation on repeated __init__ calls.
         if hasattr(self, "_initialised") and self._initialised:
+            if hasattr(self, "_redis_url") and self._redis_url != redis_url:
+                logger.warning(
+                    "EmbeddingService singleton was created with a different "
+                    "redis_url (%s). The original URL is being used.",
+                    redis_url,
+                )
             return
+        self._redis_url = redis_url  # store for comparison
         self._redis: aioredis.Redis = aioredis.from_url(
             redis_url, decode_responses=True
         )
@@ -104,10 +111,10 @@ class EmbeddingService:
         if cached is not None:
             return cached
 
-        async with self._lock:
-            embedding = await asyncio.to_thread(
-                self.model.encode, text, normalize_embeddings=True
-            )
+        # No lock needed — model.encode() is thread-safe for inference
+        embedding = await asyncio.to_thread(
+            self.model.encode, text, normalize_embeddings=True
+        )
         embedding = embedding.tolist()
         await self._set_cached(text, embedding)
         return embedding
@@ -137,11 +144,10 @@ class EmbeddingService:
         # 2. Encode the uncached texts in a single batch call.
         # Lock only during model inference, not cache writes.
         if uncached_texts:
-            async with self._lock:
-                embeddings = await asyncio.to_thread(
-                    self.model.encode, uncached_texts, normalize_embeddings=True
-                )
-            # Release lock before cache writes for parallelism
+            # No lock needed — model.encode() is thread-safe for inference
+            embeddings = await asyncio.to_thread(
+                self.model.encode, uncached_texts, normalize_embeddings=True
+            )
             embeddings = embeddings.tolist()
             for i, idx in enumerate(uncached_indices):
                 results[idx] = embeddings[i]

@@ -1,7 +1,8 @@
 import asyncio
 import json
 import logging
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+import hashlib
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 import assemblyai as aai
 from app.config import get_settings
 
@@ -9,9 +10,18 @@ router = APIRouter(prefix="/api/v1", tags=["Stream"])
 logger = logging.getLogger(__name__)
 
 @router.websocket("/stream/dictation")
-async def stream_dictation(websocket: WebSocket):
-    await websocket.accept()
+async def stream_dictation(websocket: WebSocket, token: str = Query(default="")):
     settings = get_settings()
+
+    # Validate token before accepting the WebSocket upgrade
+    expected_token = hashlib.sha256(
+        (settings.openai_api_key or "ragbot-default").encode()
+    ).hexdigest()[:16]
+    if token != expected_token:
+        await websocket.close(code=4001)
+        return
+
+    await websocket.accept()
     
     if not settings.assemblyai_api_key:
         await websocket.send_json({"type": "error", "message": "AssemblyAI API key not configured"})

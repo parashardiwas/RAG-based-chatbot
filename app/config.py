@@ -3,6 +3,9 @@ Central configuration for the RAG chatbot.
 All settings are loaded from environment variables with sensible defaults.
 """
 
+import os
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
@@ -40,7 +43,7 @@ class Settings(BaseSettings):
     request_timeout_seconds: int = 30
 
     # ── File Storage ──────────────────────────────────────────
-    upload_dir: str = "./uploads"
+    upload_dir: str = os.path.abspath("./uploads")
     max_upload_size_mb: int = 100
 
     # ── Logging ───────────────────────────────────────────────
@@ -50,6 +53,16 @@ class Settings(BaseSettings):
     app_name: str = "RAG Answering Service"
     app_version: str = "1.0.0"
     debug: bool = False
+
+    @field_validator("openai_api_key")
+    @classmethod
+    def openai_key_must_be_set(cls, v: str) -> str:
+        if v.startswith("your-") or v.startswith("sk-your-"):
+            raise ValueError(
+                "OPENAI_API_KEY must be set via environment variable. "
+                "Do not use placeholder values."
+            )
+        return v
 
     model_config = {
         "env_file": ".env",

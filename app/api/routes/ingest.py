@@ -4,6 +4,8 @@ Ingestion endpoint — upload files and documents to be chunked, embedded, and s
 
 import logging
 import os
+import pathlib
+import re as _re
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
@@ -17,6 +19,13 @@ from app.schemas.response import IngestResponse
 import aiofiles
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/ingest", tags=["Ingestion"])
+
+
+def _safe_filename(filename: str) -> str:
+    """Strip directory components and dangerous characters from an uploaded filename."""
+    name = pathlib.Path(filename).name  # strips all path components
+    name = _re.sub(r'[^\w\-_. ]', '_', name)
+    return name or "upload"
 
 
 async def _process_file_background(
@@ -95,7 +104,7 @@ async def _process_file_background(
                     language=language or chunk.get("language"),
                     source_file=filename,
                     source_type=chunk.get("source_type", "document"),
-                    metadata=chunk.get("metadata", {}),
+                    metadata_=chunk.get("metadata", {}),
                     embedding=embedding,
                     subject_id=subject_id,
                     topic_id=topic_id,
@@ -179,22 +188,40 @@ async def ingest_file(
     document_id = str(uuid.uuid4())
     abs_upload_dir = os.path.abspath(os.path.join(settings.upload_dir, document_id))
     os.makedirs(abs_upload_dir, exist_ok=True)
-    file_path = os.path.join(abs_upload_dir, file.filename or "upload")
+    safe_name = _safe_filename(file.filename or "upload")
+    file_path = os.path.join(abs_upload_dir, safe_name)
+    # Validate resolved path stays within upload directory
+    resolved = pathlib.Path(file_path).resolve()
+    allowed = pathlib.Path(abs_upload_dir).resolve()
+    if not str(resolved).startswith(str(allowed)):
+        raise HTTPException(status_code=400, detail="Invalid filename")
 
     # Use async file I/O to avoid blocking event loop
     async with aiofiles.open(file_path, "wb") as f:
         await f.write(content)
 
-    # Create document record
+    # Check for duplicate document by file hash
     import hashlib
     from app.db.models import Document
+    from sqlalchemy import select
 
+    file_hash_value = hashlib.sha256(content).hexdigest()
+    existing_doc = await db.execute(
+        select(Document).where(Document.file_hash == file_hash_value)
+    )
+    if existing_doc.scalar_one_or_none():
+        raise HTTPException(
+            status_code=409,
+            detail="This document has already been ingested. Delete it first to re-ingest."
+        )
+
+    # Create document record
     doc = Document(
         id=uuid.UUID(document_id),
         filename=file.filename or "upload",
         file_type=file.content_type,
         file_path=file_path,
-        file_hash=hashlib.sha256(content).hexdigest(),
+        file_hash=file_hash_value,
         language=language,
         status="processing",
     )

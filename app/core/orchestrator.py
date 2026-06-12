@@ -60,7 +60,6 @@ class Orchestrator:
         self._retrieval_service = None
         self._llm_generator = None
         self._confidence_scorer = None
-        self._model_router = None
         self._translator_service = None
         self._redis = None
 
