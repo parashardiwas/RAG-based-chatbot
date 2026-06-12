@@ -217,7 +217,7 @@ class FileParser:
         """
         Split text using a two-phase approach:
         1. Topic-wise chunking (by semantic headers)
-        2. Word-wise chunking within each topic (with sliding window overlap)
+        2. Sentence-wise chunking within each topic
         """
         chunks = []
         source_type = self._get_source_type(file_ext)
@@ -225,32 +225,51 @@ class FileParser:
         # Phase 1: Topic-wise split
         topics = self._split_into_topics(text)
         
-        # Phase 2: Word-wise split within each topic
+        # Simple sentence boundary regex (looks for .!? followed by space and Capital letter)
+        sentence_end_pattern = re.compile(r'(?<=[.!?])\s+(?=[A-Z])')
+        
+        # Phase 2: Sentence-wise split within each topic
         for topic_title, topic_content in topics:
-            words = topic_content.split()
+            sentences = sentence_end_pattern.split(topic_content)
             
-            if not words:
+            if not sentences:
                 continue
                 
-            # Advance window by (size - overlap)
-            step = max(1, self.CHUNK_SIZE_WORDS - self.CHUNK_OVERLAP_WORDS)
+            current_chunk_sentences = []
+            current_word_count = 0
             
-            for i in range(0, len(words), step):
-                chunk_words = words[i:i + self.CHUNK_SIZE_WORDS]
-                chunk_text = " ".join(chunk_words)
+            for sentence in sentences:
+                words = sentence.split()
+                if not words:
+                    continue
+                    
+                current_chunk_sentences.append(sentence)
+                current_word_count += len(words)
                 
+                if current_word_count >= self.CHUNK_SIZE_WORDS:
+                    chunks.append({
+                        "content": " ".join(current_chunk_sentences),
+                        "source_type": source_type,
+                        "metadata": {
+                            "filename": filename,
+                            "topic": topic_title
+                        },
+                    })
+                    
+                    # Keep the last sentence for overlap
+                    current_chunk_sentences = current_chunk_sentences[-1:]
+                    current_word_count = len(current_chunk_sentences[0].split())
+            
+            # Add remaining sentences as a final chunk
+            if current_chunk_sentences and current_word_count > 0:
                 chunks.append({
-                    "content": chunk_text,
+                    "content": " ".join(current_chunk_sentences),
                     "source_type": source_type,
                     "metadata": {
                         "filename": filename,
                         "topic": topic_title
                     },
                 })
-                
-                # If we've reached the end of the words for this topic, stop adding chunks
-                if i + self.CHUNK_SIZE_WORDS >= len(words):
-                    break
                     
         return chunks
 

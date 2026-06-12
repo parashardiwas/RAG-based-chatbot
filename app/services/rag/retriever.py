@@ -14,41 +14,15 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 from uuid import UUID
-
-import numpy as np
-from rank_bm25 import BM25Okapi
-from sqlalchemy import text as sa_text
-from sqlalchemy.ext.asyncio import AsyncSession
-
 import asyncio
+import logging
+
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# BM25 tokenization constants (module-level for performance)
-# ---------------------------------------------------------------------------
-_STOP_WORDS: frozenset[str] = frozenset({
-    "what", "is", "are", "the", "a", "an", "of", "in", "to", "and", "or",
-    "for", "on", "with", "how", "why", "when", "where", "who", "which",
-    "do", "does", "did", "can", "could", "would", "should", "it", "its",
-    "this", "that", "these", "those", "be", "been", "being", "was", "were",
-    "has", "have", "had", "not", "but", "if", "so", "as", "at", "by",
-    "from", "about", "into", "through", "during", "before", "after",
-    "above", "below", "between", "up", "down", "out", "off", "over",
-    "under", "again", "then", "once", "here", "there", "all", "each",
-    "every", "both", "few", "more", "most", "other", "some", "such",
-    "no", "nor", "only", "own", "same", "than", "too", "very",
-    "will", "just", "don", "shall", "may", "might", "must",
-})
-_WORD_PATTERN = re.compile(r'\b\w+\b')
-
-
-def _tokenize(text: str) -> list[str]:
-    """Tokenize text for BM25: lowercase, extract words, remove stop words."""
-    words = _WORD_PATTERN.findall(text.lower())
-    return [w for w in words if w not in _STOP_WORDS]
-
+from sqlalchemy import text as sa_text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -123,28 +97,33 @@ ORDER BY LEAST(
 LIMIT :top_k
 """
 
-_BM25_CORPUS_CHUNKS_SQL = """
+_FTS_SEARCH_CHUNKS_SQL = """
 SELECT dc.id AS chunk_id, dc.content, dc.source_file,
        t.name AS topic, s.name AS subject,
-       'document_chunk' AS source_type
+       'document_chunk' AS source_type,
+       ts_rank_cd(to_tsvector('english', dc.content), websearch_to_tsquery('english', :query)) AS similarity
 FROM document_chunks dc
 LEFT JOIN topics t ON dc.topic_id = t.id
 LEFT JOIN subjects s ON dc.subject_id = s.id
-WHERE 1 = 1
+WHERE to_tsvector('english', dc.content) @@ websearch_to_tsquery('english', :query)
     {filters}
-LIMIT 1000
+ORDER BY similarity DESC
+LIMIT :top_k
 """
 
-_BM25_CORPUS_QA_SQL = """
+_FTS_SEARCH_QA_SQL = """
 SELECT qa.id AS chunk_id, qa.question || ' ' || qa.answer AS content,
        NULL AS source_file, t.name AS topic, s.name AS subject,
-       'qa_pair' AS source_type
+       'qa_pair' AS source_type,
+       ts_rank_cd(to_tsvector('english', qa.question || ' ' || qa.answer), websearch_to_tsquery('english', :query)) AS similarity
 FROM qa_pairs qa
 LEFT JOIN topics t ON qa.topic_id = t.id
 LEFT JOIN subjects s ON qa.subject_id = s.id
 WHERE qa.is_deleted = false
+  AND to_tsvector('english', qa.question || ' ' || qa.answer) @@ websearch_to_tsquery('english', :query)
     {filters}
-LIMIT 500
+ORDER BY similarity DESC
+LIMIT :top_k
 """
 
 
@@ -162,11 +141,10 @@ class RetrievalService:
         result = await retriever.retrieve("What is photosynthesis?", query_emb)
     """
 
+    _cross_encoder: ClassVar[Any] = None
+
     def __init__(self, db_session_factory) -> None:
         self._session_factory = db_session_factory
-        # In-memory BM25 corpus cache (populated on first call).
-        self._bm25_cache: dict[str, tuple[BM25Okapi, list[dict[str, Any]]]] = {}
-        self._bm25_locks: dict[str, asyncio.Lock] = {}  # Per-key locks for thread-safe cache init
 
     # ------------------------------------------------------------------
     # Public API
@@ -178,8 +156,7 @@ class RetrievalService:
 
     def invalidate_bm25_cache(self) -> None:
         """Clear the in-memory BM25 index so new documents are picked up."""
-        self._bm25_cache.clear()
-        logger.info("BM25 cache invalidated — will rebuild on next query.")
+        pass  # No-op, Postgres FTS handles updates instantly.
 
     async def retrieve(
         self,
@@ -211,17 +188,45 @@ class RetrievalService:
         filters = self._build_filter_clauses(subject_filter, topic_filter)
 
         # Run both search strategies in parallel
-        vector_results, bm25_results = await asyncio.gather(
+        vector_results, fts_results = await asyncio.gather(
             self._vector_search(
                 query_embedding, top_k=top_k * 2, filters=filters
             ),
-            self._bm25_search(
+            self._fts_search(
                 query, top_k=top_k * 2, filters=filters
             )
         )
 
-        merged = self._reciprocal_rank_fusion(vector_results, bm25_results, k=60)
-        top_chunks = merged[:top_k]
+        merged = self._reciprocal_rank_fusion(vector_results, fts_results, k=60)
+        
+        # Cross-Encoder Reranking
+        # Re-score the top 20 candidates from the hybrid search
+        candidates = merged[:20]
+        if candidates:
+            # Lazy load the cross-encoder model
+            if self.__class__._cross_encoder is None:
+                from sentence_transformers import CrossEncoder
+                logger.info("Loading cross-encoder model 'cross-encoder/ms-marco-MiniLM-L-6-v2' ...")
+                self.__class__._cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2", max_length=512)
+            
+            # Prepare pairs of (query, chunk_content)
+            pairs = [(query, chunk.content) for chunk in candidates]
+            # Get logits from the cross encoder (not bound to [0,1], higher is better)
+            # Run in a separate thread since inference is CPU blocking
+            scores = await asyncio.to_thread(self.__class__._cross_encoder.predict, pairs)
+            
+            # Apply the new scores
+            for i, chunk in enumerate(candidates):
+                # We overwrite the similarity score for the final ranking.
+                # Cross-encoder scores are typically logits, we don't strictly need them in [0,1]
+                # for sorting, but we might want to normalize them if confidence relies on it.
+                # For now, just store the raw score.
+                chunk.similarity_score = float(scores[i])
+            
+            # Re-sort candidates by the new cross-encoder score descending
+            candidates.sort(key=lambda c: c.similarity_score, reverse=True)
+            
+        top_chunks = candidates[:top_k]
 
         return top_chunks
 
@@ -316,86 +321,52 @@ class RetrievalService:
         return results[:top_k]
 
     # ------------------------------------------------------------------
-    # BM25 keyword search
+    # FTS keyword search
     # ------------------------------------------------------------------
 
-    async def _bm25_search(
+    async def _fts_search(
         self,
         query: str,
         top_k: int,
         filters: dict[str, Any],
     ) -> list[RetrievedChunk]:
-        """Rank documents using BM25 over the tokenised corpus.
-
-        The corpus is fetched from the database on first invocation and
-        cached in memory (keyed by filter fingerprint).
-        
-        Uses per-key locks to prevent concurrent cache initialization.
-        """
-        cache_key = str(sorted(filters["params"].items()))
-
-        # Ensure lock exists for this cache key
-        if cache_key not in self._bm25_locks:
-            self._bm25_locks[cache_key] = asyncio.Lock()
-        
-        # Use lock to prevent concurrent cache initialization
-        async with self._bm25_locks[cache_key]:
-            if cache_key not in self._bm25_cache:
-                corpus_docs = await self._load_bm25_corpus(filters)
-                if not corpus_docs:
-                    return []
-                tokenised = [_tokenize(doc["content"]) for doc in corpus_docs]
-                bm25 = BM25Okapi(tokenised)
-                self._bm25_cache[cache_key] = (bm25, corpus_docs)
-
-        bm25, corpus_docs = self._bm25_cache[cache_key]
-
-        tokenised_query = _tokenize(query)
-        if not tokenised_query:
-            return []
-
-        scores = bm25.get_scores(tokenised_query)
-
-        # Normalise scores to [0, 1].
-        max_score = float(np.max(scores)) if len(scores) > 0 else 1.0
-        if max_score == 0:
-            max_score = 1.0
-
-        ranked_indices = np.argsort(scores)[::-1][:top_k]
+        """Rank documents using Postgres Full Text Search (FTS)."""
+        filter_sql = filters["sql"]
+        params: dict[str, Any] = {
+            "query": query,
+            "top_k": top_k,
+            **filters["params"],
+        }
 
         results: list[RetrievedChunk] = []
-        for idx in ranked_indices:
-            norm_score = float(scores[int(idx)]) / max_score
-            # Filter out zero-score results — they have no keyword overlap
-            # and only pollute RRF merge and drag down confidence.
-            if norm_score < 0.01:
-                continue
-            doc = corpus_docs[int(idx)]
-            results.append(
-                RetrievedChunk(
-                    chunk_id=doc["chunk_id"],
-                    content=doc["content"],
-                    similarity_score=norm_score,
-                    source_file=doc.get("source_file"),
-                    topic=doc.get("topic"),
-                    subject=doc.get("subject"),
-                    source_type=doc.get("source_type", "document_chunk"),
-                )
-            )
-        return results
-
-    async def _load_bm25_corpus(
-        self, filters: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        """Fetch all chunks + QA pairs for BM25 indexing."""
-        docs: list[dict[str, Any]] = []
         async with self._session_factory() as session:
-            for sql_template in (_BM25_CORPUS_CHUNKS_SQL, _BM25_CORPUS_QA_SQL):
-                query = sa_text(sql_template.format(filters=filters["sql"]))
-                rows = await session.execute(query, filters["params"])
+            for sql_template in (_FTS_SEARCH_CHUNKS_SQL, _FTS_SEARCH_QA_SQL):
+                query_obj = sa_text(sql_template.format(filters=filter_sql))
+                rows = await session.execute(query_obj, params)
                 for row in rows.mappings():
-                    docs.append(dict(row))
-        return docs
+                    results.append(
+                        RetrievedChunk(
+                            chunk_id=row["chunk_id"],
+                            content=row["content"],
+                            similarity_score=float(row["similarity"]),
+                            source_file=row.get("source_file"),
+                            topic=row.get("topic"),
+                            subject=row.get("subject"),
+                            source_type=row.get("source_type", "document_chunk"),
+                        )
+                    )
+
+        # Sort descending by similarity.
+        results.sort(key=lambda c: c.similarity_score, reverse=True)
+        # Normalize scores to [0, 1] for RRF
+        max_score = results[0].similarity_score if results else 1.0
+        if max_score <= 0.0:
+            max_score = 1.0
+            
+        for c in results:
+            c.similarity_score = max(0.0, min(c.similarity_score / max_score, 1.0))
+            
+        return results[:top_k]
 
     # ------------------------------------------------------------------
     # Reciprocal Rank Fusion

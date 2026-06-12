@@ -20,7 +20,6 @@ sentence-transformers>=4.0.0
 torch>=2.0.0,<3.0.0
 
 # AI/ML - RAG
-rank-bm25>=0.2.2
 numpy>=2.0.0
 
 # Media Processing

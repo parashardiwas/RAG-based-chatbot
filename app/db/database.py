@@ -86,3 +86,6 @@ async def init_db() -> None:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         # Create tables that don't exist yet
         await conn.run_sync(Base.metadata.create_all)
+        # Create Full Text Search (FTS) indexes for BM25 replacement
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_document_chunks_content_tsvector ON document_chunks USING gin(to_tsvector('english', content))"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_qa_pairs_content_tsvector ON qa_pairs USING gin(to_tsvector('english', question || ' ' || answer))"))
