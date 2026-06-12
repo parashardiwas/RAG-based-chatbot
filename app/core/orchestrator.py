@@ -140,7 +140,7 @@ class Orchestrator:
                 )
 
             # ── Step 3: Exact Match QA Cache Check ──────────────
-            exact_match = await self._check_exact_qa_cache(english_question)
+            exact_match = await self._check_exact_qa_cache(english_question, language)
             if exact_match:
                 logger.info(f"[{request_id}] Exact QA Match found! Confidence: {exact_match['confidence']:.2f}")
                 
@@ -434,7 +434,7 @@ class Orchestrator:
         english_question = trans_result["english_text"]
         
         # ── Step 2: Cache Check (Exact Match) ───────────────
-        exact_match = await self._check_exact_qa_cache(english_question)
+        exact_match = await self._check_exact_qa_cache(english_question, language)
         if exact_match:
             latency = int((time.time() - start_time) * 1000)
             yield f"data: {json.dumps({'metadata': {'latency_ms': latency, 'confidence': exact_match['confidence'], 'retrieval_confidence': exact_match['retrieval_confidence'], 'model_used': 'qa_pair_cache', 'sources': [], 'cached': True}})}\n\n"
@@ -600,13 +600,13 @@ class Orchestrator:
         else:
             return "⚠️ This answer has low confidence. Please verify against the sources provided."
 
-    async def _check_exact_qa_cache(self, question: str) -> dict | None:
+    async def _check_exact_qa_cache(self, question: str, language: str) -> dict | None:
         """O(1) exact match before spending 50ms on embedding."""
         if not self._redis:
             return None
         import hashlib
         import json
-        key = f"exact_qa:{hashlib.sha256(question.lower().strip().encode()).hexdigest()[:16]}"
+        key = f"exact_qa:{hashlib.sha256(f'{question}:{language}'.lower().strip().encode()).hexdigest()[:16]}"
         cached = await self._redis.get(key)
         return json.loads(cached) if cached else None
 
@@ -637,7 +637,7 @@ class Orchestrator:
             await self._redis.setex(cache_key, 3600, json.dumps(result, default=str))
             
             # Also write to exact_qa for O(1) exact match lookup
-            exact_key = f"exact_qa:{hashlib.sha256(text.lower().strip().encode()).hexdigest()[:16]}"
+            exact_key = f"exact_qa:{hashlib.sha256(f'{text}:{language}'.lower().strip().encode()).hexdigest()[:16]}"
             await self._redis.setex(exact_key, 3600, json.dumps(result, default=str))
         except Exception as e:
             logger.debug(f"Cache write failed: {e}")

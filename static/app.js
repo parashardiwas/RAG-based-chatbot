@@ -39,10 +39,18 @@ function showToast(message, type = 'info') {
 
 // ── API Client ─────────────────────────────────────────────
 const API = {
+    getAuthHeaders(baseHeaders = {}) {
+        const apiKey = document.getElementById('api-key-input')?.value || '';
+        if (apiKey) {
+            return { ...baseHeaders, 'X-API-Key': apiKey };
+        }
+        return baseHeaders;
+    },
+
     async ask(question, language, subject, topic) {
         const resp = await fetch('/api/v1/ask', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ text: question, language: language || 'en', subject, topic }),
         });
         if (!resp.ok) {
@@ -59,7 +67,7 @@ const API = {
         if (language) form.append('language', language);
         if (subject) form.append('subject', subject);
         if (topic) form.append('topic', topic);
-        const resp = await fetch('/api/v1/ask/audio', { method: 'POST', body: form });
+        const resp = await fetch('/api/v1/ask/audio', { method: 'POST', headers: this.getAuthHeaders(), body: form });
         if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
         return resp.json();
     },
@@ -70,7 +78,7 @@ const API = {
         if (language) form.append('language', language);
         if (subject) form.append('subject', subject);
         if (topic) form.append('topic', topic);
-        const resp = await fetch('/api/v1/ask/video', { method: 'POST', body: form });
+        const resp = await fetch('/api/v1/ask/video', { method: 'POST', headers: this.getAuthHeaders(), body: form });
         if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
         return resp.json();
     },
@@ -81,7 +89,7 @@ const API = {
         if (subject) form.append('subject', subject);
         if (topic) form.append('topic', topic);
         if (language) form.append('language', language);
-        const resp = await fetch('/api/v1/ingest/file', { method: 'POST', body: form });
+        const resp = await fetch('/api/v1/ingest/file', { method: 'POST', headers: this.getAuthHeaders(), body: form });
         if (!resp.ok) {
             const errText = await resp.text();
             try { throw new Error(JSON.parse(errText).detail || resp.statusText); } 
@@ -103,7 +111,7 @@ const API = {
     },
 
     async deleteDocument(documentId) {
-        const resp = await fetch(`/api/v1/ingest/documents/${documentId}`, { method: 'DELETE' });
+        const resp = await fetch(`/api/v1/ingest/documents/${documentId}`, { method: 'DELETE', headers: this.getAuthHeaders() });
         if (!resp.ok) throw new Error('Failed to delete document');
         return resp.json();
     },
@@ -117,7 +125,7 @@ const API = {
     async createQA(question, answer, language) {
         const resp = await fetch('/api/v1/qa', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ question, answer, language: language || 'en' }),
         });
         if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
@@ -127,7 +135,7 @@ const API = {
     async updateQA(id, question, answer, editReason) {
         const resp = await fetch(`/api/v1/qa/${id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ question, answer, edit_reason: editReason }),
         });
         if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
@@ -135,7 +143,7 @@ const API = {
     },
 
     async deleteQA(id) {
-        const resp = await fetch(`/api/v1/qa/${id}`, { method: 'DELETE' });
+        const resp = await fetch(`/api/v1/qa/${id}`, { method: 'DELETE', headers: this.getAuthHeaders() });
         if (!resp.ok) throw new Error('Failed to delete');
         return resp.json();
     },
@@ -143,7 +151,7 @@ const API = {
     async compare(question, userAnswer) {
         const resp = await fetch('/api/v1/compare', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ question: question, user_answer: userAnswer })
         });
         if (!resp.ok) {
@@ -1088,3 +1096,15 @@ function escapeHtml(str) {
 // ── Auto-refresh ───────────────────────────────────────────
 refreshHealth();
 setInterval(refreshHealth, 30000);  // Every 30s
+
+// ── API Key Persistence ────────────────────────────────────
+const apiKeyInput = document.getElementById('api-key-input');
+if (apiKeyInput) {
+    const savedKey = localStorage.getItem('ragbot_api_key');
+    if (savedKey) {
+        apiKeyInput.value = savedKey;
+    }
+    apiKeyInput.addEventListener('input', (e) => {
+        localStorage.setItem('ragbot_api_key', e.target.value);
+    });
+}
