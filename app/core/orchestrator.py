@@ -177,7 +177,7 @@ class Orchestrator:
             cost.embedding_tokens = len(english_question.split()) * 2
 
             # High confidence threshold for returning a QA Pair
-            qa_confidence_threshold = 0.85
+            qa_confidence_threshold = 0.75
             if qa_results and qa_results[0].similarity_score >= qa_confidence_threshold:
                 best_qa = qa_results[0]
                 logger.info(f"[{request_id}] Q/A Pair match found! Confidence: {best_qa.similarity_score:.2f}")
@@ -451,7 +451,7 @@ class Orchestrator:
             topic_filter=topic_filter
         )
         
-        if qa_results and qa_results[0].similarity_score >= 0.85:
+        if qa_results and qa_results[0].similarity_score >= 0.75:
             best_qa = qa_results[0]
             async with self._db_session_factory() as session:
                 from app.db.models import QAPair

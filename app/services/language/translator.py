@@ -128,7 +128,7 @@ Are the core facts in Answer A and Answer B equivalent?"""
                 model=self._model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
-                max_tokens=5,  # We only need YES or NO — cap tokens for speed
+                max_completion_tokens=5,  # We only need YES or NO — cap tokens for speed
             )
             result = response.choices[0].message.content.strip().upper()
             return result.startswith("YES")
