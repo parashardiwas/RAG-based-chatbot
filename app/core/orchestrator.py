@@ -155,7 +155,7 @@ class Orchestrator:
                     language=original_language,
                     confidence=exact_match['confidence'],
                     retrieval_confidence=exact_match['retrieval_confidence'],
-                    sources=[],
+                    sources=exact_match.get('sources', []),
                     model_used="qa_pair_cache",
                     latency_ms=latency,
                     cached=True,
@@ -437,7 +437,7 @@ class Orchestrator:
         exact_match = await self._check_exact_qa_cache(english_question, language)
         if exact_match:
             latency = int((time.time() - start_time) * 1000)
-            yield f"data: {json.dumps({'metadata': {'latency_ms': latency, 'confidence': exact_match['confidence'], 'retrieval_confidence': exact_match['retrieval_confidence'], 'model_used': 'qa_pair_cache', 'sources': [], 'cached': True}})}\n\n"
+            yield f"data: {json.dumps({'metadata': {'latency_ms': latency, 'confidence': exact_match['confidence'], 'retrieval_confidence': exact_match['retrieval_confidence'], 'model_used': 'qa_pair_cache', 'sources': exact_match.get('sources', []), 'cached': True}})}\n\n"
             yield f"data: {json.dumps({'chunk': exact_match['answer']})}\n\n"
             yield "data: [DONE]\n\n"
             return
