@@ -152,6 +152,21 @@ async def create_qa_pair(
     """Create a new Q/A pair with auto-generated embeddings."""
     from app.services.rag.embedder import EmbeddingService
 
+    # Check for duplicate question (case-insensitive)
+    result = await db.execute(
+        select(QAPair).where(
+            func.lower(QAPair.question) == func.lower(request.question),
+            QAPair.is_deleted == False
+        )
+    )
+    existing_pair = result.scalar_one_or_none()
+    
+    if existing_pair:
+        raise HTTPException(
+            status_code=409, 
+            detail=f"A Q/A pair with this question already exists (ID: {existing_pair.id})"
+        )
+
     embedding_service = EmbeddingService()
 
     # Generate embeddings for question, answer, and combined

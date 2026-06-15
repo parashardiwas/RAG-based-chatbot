@@ -35,7 +35,27 @@ class TranslatorService:
         
         # 1. Check for Hinglish using common romanized Hindi stop words
         text_lower = text.lower()
-        hinglish_keywords = {"kya", "hai", "kaise", "kyu", "mera", "tera", "haan", "nahi", "karo", "yeh", "woh", "aap", "ka", "ki", "ke", "ho"}
+        hinglish_keywords = {
+            # Common Hinglish words
+            "kya", "hai", "hain", "kaise", "kyu", "kyun", "kab", "kahan", "kaun",
+            "mera", "tera", "uska", "hamara", "tumhara", "unka",
+            "haan", "nahi", "nahin", "mat", "karo", "karna", "kiye", "kiya",
+            "yeh", "woh", "ye", "wo", "iska", "uske", "isme", "usme",
+            "aap", "aapka", "aapki", "aapko", "aapse", 
+            "main", "mujhe", "mujhse", "mujhko", "mere", "meri",
+            "tum", "tumhe", "tumse", "tumko", "tumhare", "tumhari",
+            "ho", "hota", "hoti", "hote", "tha", "thi", "the", "thay",
+            "kar", "karte", "karti", "karta", "karke", "karne",
+            "ja", "jao", "jata", "jati", "jate", "jaana", "jaane",
+            "aa", "aao", "aata", "aati", "aate", "aana", "aane",
+            "de", "do", "deta", "deti", "dete", "dena", "dene",
+            "le", "lo", "leta", "leti", "lete", "lena", "lene",
+            "bhi", "bhi", "sirf", "bas", "bilkul", "thoda", "zyada", "kam",
+            "accha", "bura", "sahi", "galat", "theek", "samjha", "pata",
+            "lagta", "lagti", "lagte", "laga", "lagi", "lage",
+            "chahiye", "chahiye", "chalo", "ruko", "dekho", "suno",
+            "batao", "bolo", "kaho", "pucho", "janiye", "samjho"
+        }
         words = set(re.findall(r'\b\w+\b', text_lower))
         is_hinglish = len(words.intersection(hinglish_keywords)) > 0
         
@@ -55,10 +75,20 @@ class TranslatorService:
                 return {"english_text": text, "original_language": "en"}
                 
         # 2. If we reach here, it's non-English or Hinglish. Use a lightweight LLM translation prompt.
-        prompt = f"""You are a fast translation engine.
-Translate the following text to English.
-If it is in Hindi (Devanagari) or Hinglish (Roman Hindi), translate it to pure English.
-Output ONLY the English translation, nothing else. No markdown, no quotes.
+        prompt = f"""You are a specialized multilingual translation engine with expertise in Hindi and Hinglish.
+
+IMPORTANT LANGUAGE RECOGNITION:
+- Hindi: Text written in Devanagari script (हिंदी)
+- Hinglish: Hindi words written in English alphabet (examples: "kya hai", "mujhe pata nahi", "acha lagta hai")
+- Mixed: Some English + some Hindi/Hinglish in the same sentence
+
+TASK: Translate the following text to clear, natural English.
+
+RULES:
+1. If the text contains ANY Hindi (Devanagari) or Hinglish (romanized Hindi), translate it completely to English
+2. Preserve the meaning and context accurately
+3. For mixed sentences, translate only the Hindi/Hinglish parts while keeping English parts intact
+4. Output ONLY the English translation, no explanations or formatting
 
 Text: "{text}"
 """
@@ -83,11 +113,23 @@ Text: "{text}"
         if target_language == "hinglish":
             lang_instruction = "Hinglish (Hindi written in Roman/English alphabet)"
             
-        prompt = f"""You are a fast translation engine.
-Translate the following English text into {lang_instruction}.
-Output ONLY the translated text, nothing else. No markdown, no quotes.
+        prompt = f"""You are a specialized multilingual translation engine with expertise in Hindi and Hinglish.
 
-Text: "{text}"
+TARGET LANGUAGE SPECIFICATIONS:
+- Hindi (hi): Use proper Devanagari script (हिंदी में लिखें)
+- Hinglish: Use Hindi words written in English alphabet (example: "Main samjha ki aap sahi keh rahe hain")
+- Other languages: Use the specified language code
+
+TASK: Translate this English text into {lang_instruction}.
+
+RULES:
+1. Maintain the exact meaning and context
+2. Use natural, conversational tone appropriate for the target language
+3. For Hinglish: Mix Hindi and English naturally as native speakers do
+4. For Hindi: Use proper Devanagari script with correct grammar
+5. Output ONLY the translated text, no explanations or formatting
+
+English text: "{text}"
 """
         try:
             client = self._get_client()
