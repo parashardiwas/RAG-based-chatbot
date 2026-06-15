@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     upload_dir: str = os.path.abspath("./uploads")
     max_upload_size_mb: int = 100
 
+    # ── Chunking Configuration ────────────────────────────────
+    chunk_size_words: int = 250
+    chunk_overlap_words: int = 50
+
     # ── Logging ───────────────────────────────────────────────
     log_level: str = "INFO"
 

@@ -29,9 +29,11 @@ class FileParser:
     - Preserve section headings as metadata
     """
 
-    # Max words per chunk (word-wise chunking)
-    CHUNK_SIZE_WORDS = 250
-    CHUNK_OVERLAP_WORDS = 50
+    def __init__(self):
+        """Initialize with settings from configuration."""
+        settings = get_settings()
+        self.chunk_size_words = settings.chunk_size_words
+        self.chunk_overlap_words = settings.chunk_overlap_words
 
     async def parse_file(
         self, file_path: str, filename: str
@@ -246,7 +248,7 @@ class FileParser:
                 current_chunk_sentences.append(sentence)
                 current_word_count += len(words)
                 
-                if current_word_count >= self.CHUNK_SIZE_WORDS:
+                if current_word_count >= self.chunk_size_words:
                     chunks.append({
                         "content": " ".join(current_chunk_sentences),
                         "source_type": source_type,
