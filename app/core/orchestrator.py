@@ -432,9 +432,10 @@ class Orchestrator:
         # ── Step 1: Translate to English ────────────────────
         trans_result = await self._translator_service.translate_to_english(text)
         english_question = trans_result["english_text"]
+        original_language = language or trans_result["original_language"]
         
         # ── Step 2: Cache Check (Exact Match) ───────────────
-        exact_match = await self._check_exact_qa_cache(english_question, language)
+        exact_match = await self._check_exact_qa_cache(english_question, original_language)
         if exact_match:
             latency = int((time.time() - start_time) * 1000)
             yield f"data: {json.dumps({'metadata': {'latency_ms': latency, 'confidence': exact_match['confidence'], 'retrieval_confidence': exact_match['retrieval_confidence'], 'model_used': 'qa_pair_cache', 'sources': exact_match.get('sources', []), 'cached': True}})}\n\n"
@@ -461,9 +462,13 @@ class Orchestrator:
                 res = await session.execute(stmt)
                 qa_row = res.scalar_one_or_none()
             if qa_row:
+                # Translate the English QA answer back to the user's language
+                translated_answer = await self._translator_service.translate_from_english(
+                    qa_row.answer, original_language
+                )
                 latency = int((time.time() - start_time) * 1000)
                 yield f"data: {json.dumps({'metadata': {'latency_ms': latency, 'confidence': best_qa.similarity_score, 'retrieval_confidence': best_qa.similarity_score, 'model_used': 'qa_pair_cache', 'sources': [], 'cached': True}})}\n\n"
-                yield f"data: {json.dumps({'chunk': qa_row.answer})}\n\n"
+                yield f"data: {json.dumps({'chunk': translated_answer})}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
@@ -478,7 +483,7 @@ class Orchestrator:
 
         retrieval_confidence = self._retrieval_service.compute_confidence(chunks)
         if retrieval_confidence < self._settings.retrieval_confidence_low:
-            fallback = self._get_fallback_answer(language or "en", text)
+            fallback = self._get_fallback_answer(original_language, text)
             latency = int((time.time() - start_time) * 1000)
             yield f"data: {json.dumps({'metadata': {'latency_ms': latency, 'retrieval_confidence': retrieval_confidence, 'confidence': 0.0, 'model_used': 'none (low confidence fallback)', 'sources': [], 'cached': False}})}\n\n"
             yield f"data: {json.dumps({'chunk': fallback})}\n\n"
@@ -491,7 +496,7 @@ class Orchestrator:
             valid_chunks = [c for c in chunks if c.similarity_score >= 0.25][:2]
             
         if not valid_chunks:
-            fallback = self._get_fallback_answer(language or "en", text)
+            fallback = self._get_fallback_answer(original_language, text)
             latency = int((time.time() - start_time) * 1000)
             yield f"data: {json.dumps({'metadata': {'latency_ms': latency, 'retrieval_confidence': retrieval_confidence, 'confidence': 0.0, 'model_used': 'none (low context match)', 'sources': [], 'cached': False}})}\n\n"
             yield f"data: {json.dumps({'chunk': fallback})}\n\n"
@@ -528,7 +533,7 @@ class Orchestrator:
         async for chunk in self._llm_generator.generate_stream(
             prompt=english_question,
             context=context_block,
-            language="en"
+            language=original_language
         ):
             full_answer_chunks.append(chunk)
             yield f"data: {json.dumps({'chunk': chunk})}\n\n"

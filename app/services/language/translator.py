@@ -26,53 +26,19 @@ class TranslatorService:
     async def translate_to_english(self, text: str) -> dict[str, str]:
         """
         Fast hybrid language detection:
-        1. Uses a heuristic for Hinglish.
-        2. Uses langdetect for English fast-path.
-        3. Only uses LLM for translation if non-English.
+        1. Uses robust language detector for Hinglish, Hindi, and English.
+        2. Only uses LLM for translation if non-English.
         """
-        import langdetect
-        import re
+        from app.services.language.detector import detect_language
         
-        # 1. Check for Hinglish using common romanized Hindi stop words
-        text_lower = text.lower()
-        hinglish_keywords = {
-            # Common Hinglish words
-            "kya", "hai", "hain", "kaise", "kyu", "kyun", "kab", "kahan", "kaun",
-            "mera", "tera", "uska", "hamara", "tumhara", "unka",
-            "haan", "nahi", "nahin", "mat", "karo", "karna", "kiye", "kiya",
-            "yeh", "woh", "ye", "wo", "iska", "uske", "isme", "usme",
-            "aap", "aapka", "aapki", "aapko", "aapse", 
-            "main", "mujhe", "mujhse", "mujhko", "mere", "meri",
-            "tum", "tumhe", "tumse", "tumko", "tumhare", "tumhari",
-            "ho", "hota", "hoti", "hote", "tha", "thi", "the", "thay",
-            "kar", "karte", "karti", "karta", "karke", "karne",
-            "ja", "jao", "jata", "jati", "jate", "jaana", "jaane",
-            "aa", "aao", "aata", "aati", "aate", "aana", "aane",
-            "de", "do", "deta", "deti", "dete", "dena", "dene",
-            "le", "lo", "leta", "leti", "lete", "lena", "lene",
-            "bhi", "bhi", "sirf", "bas", "bilkul", "thoda", "zyada", "kam",
-            "accha", "bura", "sahi", "galat", "theek", "samjha", "pata",
-            "lagta", "lagti", "lagte", "laga", "lagi", "lage",
-            "chahiye", "chahiye", "chalo", "ruko", "dekho", "suno",
-            "batao", "bolo", "kaho", "pucho", "janiye", "samjho"
-        }
-        words = set(re.findall(r'\b\w+\b', text_lower))
-        is_hinglish = len(words.intersection(hinglish_keywords)) > 0
+        detection = detect_language(text)
+        detected_lang = detection["language"]
         
-        detected_lang = "en"
-        if is_hinglish:
-            detected_lang = "hinglish"
-            logger.info("Heuristic detected: Hinglish")
-        else:
-            try:
-                lang = langdetect.detect(text)
-                if lang == 'en':
-                    return {"english_text": text, "original_language": "en"}
-                detected_lang = lang
-                logger.info(f"Langdetect detected: {lang}")
-            except Exception:
-                # Fallback to English if detection fails
-                return {"english_text": text, "original_language": "en"}
+        if detected_lang == "en":
+            logger.info("Language detector detected: en")
+            return {"english_text": text, "original_language": "en"}
+            
+        logger.info(f"Language detector detected: {detected_lang}")
                 
         # 2. If we reach here, it's non-English or Hinglish. Use a lightweight LLM translation prompt.
         prompt = f"""You are a specialized multilingual translation engine with expertise in Hindi and Hinglish.

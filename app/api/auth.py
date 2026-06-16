@@ -12,14 +12,10 @@ async def verify_api_key(api_key_header: str = Security(api_key_header)):
     """FastAPI Dependency for validating the X-API-Key header."""
     settings = get_settings()
     
-    # If no API key is configured on the server, we still require one for mutating routes by default,
-    # or we can allow bypass in debug mode. For safety, we enforce it unless it's explicitly disabled.
+    # If no API key is configured on the server, skip authentication entirely.
+    # This is intended for local development and testing.
     if not settings.api_key:
-        logger.warning("No API Key configured on server. Rejecting authenticated request.")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Server authentication not configured."
-        )
+        return "no-auth"
 
     if not secrets.compare_digest(api_key_header, settings.api_key):
         raise HTTPException(

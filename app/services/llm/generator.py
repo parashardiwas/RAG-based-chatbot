@@ -66,6 +66,7 @@ If the answer isn't in the sources, reply exactly: "{fallback_message}"
 _FALLBACK_MESSAGES: dict[str, str] = {
     "en": "I don't have enough information to answer this question.",
     "hi": "इस प्रश्न का उत्तर देने के लिए मेरे पास पर्याप्त जानकारी नहीं है।",
+    "hinglish": "Is question ka answer dene ke liye mere paas enough information nahi hai.",
     "es": "No tengo suficiente información para responder a esta pregunta.",
     "fr": "Je n'ai pas assez d'informations pour répondre à cette question.",
 }

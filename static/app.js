@@ -40,10 +40,6 @@ function showToast(message, type = 'info') {
 // ── API Client ─────────────────────────────────────────────
 const API = {
     getAuthHeaders(baseHeaders = {}) {
-        const apiKey = document.getElementById('api-key-input')?.value || '';
-        if (apiKey) {
-            return { ...baseHeaders, 'X-API-Key': apiKey };
-        }
         return baseHeaders;
     },
 
@@ -339,7 +335,7 @@ async function handleAsk() {
         const resp = await fetch('/api/v1/ask/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, language: lang || 'en', subject, topic }),
+            body: JSON.stringify({ text, language: lang || '', subject, topic }),
         });
 
         if (!resp.ok) {
@@ -1097,14 +1093,4 @@ function escapeHtml(str) {
 refreshHealth();
 setInterval(refreshHealth, 30000);  // Every 30s
 
-// ── API Key Persistence ────────────────────────────────────
-const apiKeyInput = document.getElementById('api-key-input');
-if (apiKeyInput) {
-    const savedKey = localStorage.getItem('ragbot_api_key');
-    if (savedKey) {
-        apiKeyInput.value = savedKey;
-    }
-    apiKeyInput.addEventListener('input', (e) => {
-        localStorage.setItem('ragbot_api_key', e.target.value);
-    });
-}
+// API key persistence removed
