@@ -1,0 +1,72 @@
+name: Build Windows Executable
+
+# Build triggers:
+#   - Manually from the Actions tab (workflow_dispatch)
+#   - On every push of a version tag like v1.0.0 (also publishes a Release)
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build x86-64 Windows .exe
+    runs-on: windows-latest   # GitHub's Windows runners are x86-64
+
+    steps:
+      # ── 1. Get the code ────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python 3.11 (x86-64) ─────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+
+      # ── 3. Install dependencies ────────────────────────────────────────────
+      # On Windows, PyPI's torch wheels are CPU-only by default — exactly what
+      # we want for a portable executable (no CUDA bloat, runs on any PC).
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller==6.11.1
+
+      # ── 4. Build the executable ────────────────────────────────────────────
+      - name: Build with PyInstaller
+        run: pyinstaller RAGServer.spec --noconfirm
+
+      # ── 5. Stage the shippable folder ──────────────────────────────────────
+      # Include a .env template and a README so the recipient knows what to do.
+      - name: Stage release files
+        shell: pwsh
+        run: |
+          Copy-Item ".env.example" "dist/RAGServer/.env.example"
+          Copy-Item "EXECUTABLE_USER_GUIDE.md" "dist/RAGServer/README.txt" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path "dist/RAGServer/uploads" | Out-Null
+
+      # ── 6. Zip the distribution ────────────────────────────────────────────
+      - name: Create ZIP archive
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/RAGServer/*" -DestinationPath "RAGServer-windows-x64.zip" -Force
+
+      # ── 7. Upload as a downloadable artifact ───────────────────────────────
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RAGServer-windows-x64
+          path: RAGServer-windows-x64.zip
+          retention-days: 30
+
+      # ── 8. Attach to a GitHub Release when a version tag is pushed ──────────
+      - name: Publish Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: RAGServer-windows-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
